@@ -1,0 +1,63 @@
+version: '3'
+
+tasks:
+  up:
+    desc: Sobe o stack local (postgres, redis, minio, mailhog, api, web)
+    cmds:
+      - cp -n .env.example .env || true
+      - docker compose up --build
+
+  down:
+    desc: Derruba e limpa containers
+    cmds:
+      - docker compose down
+
+  reset:
+    desc: Derruba, apaga volumes e sobe limpo
+    cmds:
+      - docker compose down -v
+      - docker compose up --build
+
+  api:shell:
+    desc: Shell do Django dentro do container
+    cmds:
+      - docker compose exec api uv run python manage.py shell
+
+  api:migrate:
+    desc: Roda migrations
+    cmds:
+      - docker compose exec api uv run python manage.py migrate
+
+  api:makemigrations:
+    desc: Gera migrations a partir dos models
+    cmds:
+      - docker compose exec api uv run python manage.py makemigrations
+
+  api:superuser:
+    desc: Cria superuser admin
+    cmds:
+      - docker compose exec api uv run python manage.py createsuperuser
+
+  api:test:
+    desc: Roda pytest
+    cmds:
+      - docker compose exec api uv run pytest -x
+
+  api:schema:
+    desc: Gera schema OpenAPI em apps/api/schema.yml
+    cmds:
+      - docker compose exec api uv run python manage.py spectacular --file schema.yml
+
+  web:gen-types:
+    desc: Regenera tipos TS a partir do schema OpenAPI do Django
+    cmds:
+      - task api:schema
+      - cp apps/api/schema.yml packages/api-types/schema.yml
+      - pnpm --filter @pentesthub/api-types generate
+
+  fmt:
+    desc: Lint+format em tudo
+    cmds:
+      - docker compose exec api uv run ruff format .
+      - docker compose exec api uv run ruff check . --fix
+      - pnpm -r lint

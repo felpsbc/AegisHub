@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.uv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+.turbo/
+*.tsbuildinfo
+dist/
+out/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Generated
+apps/api/schema.yml
+packages/api-types/src/generated/
+
+# Local data
+postgres-data/
+minio-data/
+*.sqlite3

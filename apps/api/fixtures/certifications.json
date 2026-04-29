@@ -1,0 +1,9 @@
+[
+  {"model": "pentesters.certification", "pk": 1, "fields": {"code": "OSCP", "label": "Offensive Security Certified Professional"}},
+  {"model": "pentesters.certification", "pk": 2, "fields": {"code": "OSEP", "label": "Offensive Security Experienced Penetration Tester"}},
+  {"model": "pentesters.certification", "pk": 3, "fields": {"code": "CRTP", "label": "Certified Red Team Professional"}},
+  {"model": "pentesters.certification", "pk": 4, "fields": {"code": "CRTO", "label": "Certified Red Team Operator"}},
+  {"model": "pentesters.certification", "pk": 5, "fields": {"code": "CEH", "label": "Certified Ethical Hacker"}},
+  {"model": "pentesters.certification", "pk": 6, "fields": {"code": "AWS_SEC", "label": "AWS Certified Security – Specialty"}},
+  {"model": "pentesters.certification", "pk": 7, "fields": {"code": "BSCP", "label": "Burp Suite Certified Practitioner"}}
+]

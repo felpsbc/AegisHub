@@ -1,0 +1,80 @@
+/* AegisHub design tokens — light + dark.
+   Toggle por [data-theme="dark"] no <html>.
+   Regras: 0.5px de borda em vez de sombra; pesos 400 e 500 apenas;
+   sentence case; ícones lucide 12-16px; sem gradiente; sem emoji em UI. */
+
+:root {
+  --bg: #FAFAF9;
+  --surface: #FFFFFF;
+  --surface-2: #F5F5F4;
+  --surface-3: #F1F0EE;
+  --text: #0A0A0A;
+  --text-2: #6B7280;
+  --text-3: #9CA3AF;
+  --border: #E5E5E5;
+  --border-strong: #0A0A0A;
+  --accent: #1E40AF;
+  --accent-soft: #EEF2FF;
+  --accent-fg: #ffffff;
+  --status-open: #16A34A;
+  --status-busy: #CA8A04;
+  --danger: #B91C1C;
+
+  --radius-card: 12px;
+  --radius-pill: 999px;
+  --radius-md: 8px;
+
+  --container: 1200px;
+
+  --skill-blue-bg: #EEF2FF;
+  --skill-blue-fg: #1E3A8A;
+  --skill-purple-bg: #F3E8FF;
+  --skill-purple-fg: #5B21B6;
+  --skill-coral-bg: #FFE4E1;
+  --skill-coral-fg: #9F1239;
+  --skill-teal-bg: #CCFBF1;
+  --skill-teal-fg: #115E59;
+
+  --topbar-bg: rgba(250, 250, 249, 0.85);
+  --toast-bg: #0A0A0A;
+  --toast-fg: #ffffff;
+  --modal-overlay: rgba(10, 10, 10, 0.4);
+  --range-track: #E5E5E5;
+  --status-active-bg: #F1F0EE;
+}
+
+[data-theme="dark"] {
+  --bg: #0A0A0B;
+  --surface: #131316;
+  --surface-2: #1A1A1E;
+  --surface-3: #202024;
+  --text: #F5F5F4;
+  --text-2: #A1A1AA;
+  --text-3: #71717A;
+  --border: #2A2A2E;
+  --border-strong: #F5F5F4;
+  --accent: #3B82F6;
+  --accent-soft: #1E2A4A;
+  --accent-fg: #ffffff;
+  --status-open: #22C55E;
+  --status-busy: #EAB308;
+  --danger: #F87171;
+
+  --skill-blue-bg: #1E2A4A;
+  --skill-blue-fg: #BFDBFE;
+  --skill-purple-bg: #2E1F44;
+  --skill-purple-fg: #DDD6FE;
+  --skill-coral-bg: #3F1D24;
+  --skill-coral-fg: #FECDD3;
+  --skill-teal-bg: #133A35;
+  --skill-teal-fg: #99F6E4;
+
+  --topbar-bg: rgba(10, 10, 11, 0.78);
+  --toast-bg: #F5F5F4;
+  --toast-fg: #0A0A0A;
+  --modal-overlay: rgba(0, 0, 0, 0.65);
+  --range-track: #2A2A2E;
+  --status-active-bg: #202024;
+
+  color-scheme: dark;
+}

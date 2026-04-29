@@ -1,0 +1,9 @@
+[
+  {"model": "pentesters.specialty", "pk": 1, "fields": {"code": "WEB", "label": "Aplicações web"}},
+  {"model": "pentesters.specialty", "pk": 2, "fields": {"code": "MOBILE", "label": "Aplicações mobile"}},
+  {"model": "pentesters.specialty", "pk": 3, "fields": {"code": "CLOUD", "label": "Infraestrutura cloud"}},
+  {"model": "pentesters.specialty", "pk": 4, "fields": {"code": "REDTEAM", "label": "Red team"}},
+  {"model": "pentesters.specialty", "pk": 5, "fields": {"code": "NETWORK", "label": "Rede / interna"}},
+  {"model": "pentesters.specialty", "pk": 6, "fields": {"code": "API", "label": "APIs REST/GraphQL"}},
+  {"model": "pentesters.specialty", "pk": 7, "fields": {"code": "IOT", "label": "IoT / hardware"}}
+]

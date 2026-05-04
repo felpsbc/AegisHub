@@ -1,4 +1,4 @@
-# PentestHub — Marketplace B2B de pentest
+# AegisHub — Marketplace B2B de pentest
 
 Monorepo com **Django 5** (backend) e **Next.js 15** (frontend), seguindo
 `PENTESTHUB-ARQUITETURA.md` e as decisões registradas em `CLAUDE.md`.

@@ -43,6 +43,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     mfa_secret = models.BinaryField(null=True, blank=True)
     mfa_enabled = models.BooleanField(default=False)
+    mfa_backup_codes = models.JSONField(default=list, blank=True)
 
     last_login_at = models.DateTimeField(null=True, blank=True)
     failed_attempts = models.PositiveSmallIntegerField(default=0)

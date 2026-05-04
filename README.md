@@ -1,10 +1,13 @@
 # PentestHub — Marketplace B2B de pentest
 
 Monorepo com **Django 5** (backend) e **Next.js 15** (frontend), seguindo
-`PENTESTHUB-ARQUITETURA.md` e as 14 decisões do brainstorm registradas em
-`CLAUDE.md`. Esta release entrega **Fase 0 + Fase 1**: cadastro,
-autenticação (com MFA opcional), catálogos públicos, criação e candidatura
-de propostas, painel autenticado para empresa e pentester.
+`PENTESTHUB-ARQUITETURA.md` e as decisões registradas em `CLAUDE.md`.
+Esta release entrega **Fase 0 + Fase 1**: cadastro, autenticação (sessão
+httpOnly + CSRF), MFA TOTP com backup codes one-time, catálogos do
+marketplace **fechados atrás de auth + role**, criação e candidatura de
+propostas, painel autenticado para empresa e pentester.
+
+> Onboarding de dev novo? Vá direto pra [`docs/ONBOARDING.md`](docs/ONBOARDING.md).
 
 > Pagamento (Pagar.me), chat real, contratos e relatórios cifrados ficam
 > para a Fase 2. O adapter `infra/gateways/fake.py` já reserva o lugar.
@@ -114,10 +117,11 @@ Smoke test rápido (após `docker compose up` e `seed_demo`):
 # 1. API responde
 curl -s http://localhost:8000/healthz
 
-# 2. Catálogo público
-curl -s http://localhost:8000/api/v1/pentesters | jq '.[0].headline'
+# 2. Catálogo agora exige auth + role: anônimo recebe 403
+curl -si http://localhost:8000/api/v1/pentesters | head -1
+# HTTP/1.1 403 Forbidden  (only_companies_can_browse_pentesters)
 
-# 3. Login + sessão
+# 3. Login como empresa + sessão
 curl -s -c /tmp/c -X GET http://localhost:8000/api/v1/auth/csrf
 CSRF=$(grep pentesthub_csrf /tmp/c | awk '{print $7}')
 curl -s -b /tmp/c -c /tmp/c -X POST http://localhost:8000/api/v1/auth/login \
@@ -125,17 +129,25 @@ curl -s -b /tmp/c -c /tmp/c -X POST http://localhost:8000/api/v1/auth/login \
   -d '{"email":"ana@acme.com.br","password":"ana-demo-pass-2026"}'
 
 curl -s -b /tmp/c http://localhost:8000/api/v1/auth/me | jq
+
+# 4. Já logada como empresa, agora vê pentesters
+curl -s -b /tmp/c http://localhost:8000/api/v1/pentesters | jq '.[0].headline'
+
+# 5. Logue como pentester para ver o feed de propostas (sem ?mine=1)
+curl -s -b /tmp/c2 http://localhost:8000/api/v1/proposals | jq '.[0].title'
 ```
 
-Fluxo manual no navegador:
+Fluxo manual no navegador (após o BFF/integração real existir — hoje o frontend usa mock):
 
-1. Abra `http://localhost:3000` → ver landing.
-2. `/pentesters` e `/propostas` → ver catálogos populados.
-3. `/login` com `ana@acme.com.br` → cai em `/app` com painel da empresa.
-4. **Nova proposta** → preencha → publique → veja-a no catálogo.
+1. Abra `http://localhost:3000` → landing pública.
+2. `/login` como `ana@acme.com.br` (empresa) → cai em `/app`.
+3. `/app/pentesters` → ver catálogo (só visível pra empresa).
+4. **Nova proposta** → preencha → publique.
 5. Logout. Logue como `carlos@solo.com` (pentester).
-6. Abra a proposta → clique **Candidatar-se**.
-7. Logout. Logue como `ana@acme.com.br` → veja a candidatura na proposta → **Shortlist** / **Aceitar** / **Rejeitar**.
+6. `/app/propostas` → ver feed (só pentester vê). Abra a proposta → **Candidatar-se**.
+7. Logout. Logue como `ana@acme.com.br` → veja a candidatura → **Shortlist** / **Aceitar** / **Rejeitar**.
+
+> ⚠️ Anônimo nunca vê dados do marketplace. As rotas `/pentesters` e `/propostas` no `(public)/` precisam virar `(app)/` ou redirecionar para `/login` — ajuste pendente no frontend (ver `docs/ONBOARDING.md`).
 
 ---
 

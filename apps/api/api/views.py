@@ -47,6 +47,33 @@ from proposals.services import (
 from tenants.models import Membership, TenantType
 
 
+def _has_company_membership(user) -> bool:
+    if not user.is_authenticated:
+        return False
+    return Membership.objects.filter(
+        user=user, tenant__type=TenantType.COMPANY
+    ).exists()
+
+
+def _pentester_profile_for(user):
+    if not user.is_authenticated:
+        return None
+    m = (
+        Membership.objects.select_related("tenant__pentester_profile")
+        .filter(user=user, tenant__type=TenantType.INDIVIDUAL)
+        .first()
+    )
+    if not m:
+        return None
+    return getattr(m.tenant, "pentester_profile", None)
+
+
+def _is_member_of(user, tenant) -> bool:
+    if not user.is_authenticated:
+        return False
+    return Membership.objects.filter(user=user, tenant=tenant).exists()
+
+
 # ============ AUTH ============
 
 class RegisterView(APIView):
@@ -135,10 +162,13 @@ class SpecialtyListView(APIView):
 # ============ PENTESTERS ============
 
 class PentesterListView(APIView):
-    permission_classes = [AllowAny]
-
     @extend_schema(responses=PentesterPublicSerializer(many=True))
     def get(self, request):
+        if not _has_company_membership(request.user):
+            return Response(
+                {"detail": "only_companies_can_browse_pentesters"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         qs = PentesterProfile.objects.filter(
             availability=Availability.OPEN
         ).select_related("tenant").prefetch_related("specialties", "certifications__certification")
@@ -162,8 +192,6 @@ class PentesterListView(APIView):
 
 
 class PentesterDetailView(APIView):
-    permission_classes = [AllowAny]
-
     @extend_schema(responses=PentesterPublicSerializer)
     def get(self, request, public_id):
         p = get_object_or_404(
@@ -172,6 +200,8 @@ class PentesterDetailView(APIView):
             ),
             public_id=public_id,
         )
+        if not (_has_company_membership(request.user) or _is_member_of(request.user, p.tenant)):
+            return Response({"detail": "forbidden"}, status=status.HTTP_403_FORBIDDEN)
         return Response(PentesterPublicSerializer(p).data)
 
     @extend_schema(request=PentesterUpdateSerializer, responses=PentesterPublicSerializer)
@@ -200,20 +230,21 @@ class PentesterAvailabilityView(APIView):
 # ============ PROPOSALS ============
 
 class ProposalListView(APIView):
-    permission_classes = [AllowAny]
-
     @extend_schema(responses=ProposalSerializer(many=True))
     def get(self, request):
-        # Lista pública só com PUBLISHED. Empresa logada pode ver suas próprias drafts via ?mine=1
+        # Feed PUBLISHED só para pentesters cadastrados; empresas veem só as próprias via ?mine=1.
         mine = request.query_params.get("mine") == "1"
         if mine:
-            if not request.user.is_authenticated:
-                return Response({"detail": "auth_required"}, status=401)
             tenant_ids = Membership.objects.filter(user=request.user).values_list(
                 "tenant_id", flat=True
             )
             qs = Proposal.objects.filter(tenant_id__in=tenant_ids)
         else:
+            if _pentester_profile_for(request.user) is None:
+                return Response(
+                    {"detail": "only_pentesters_can_browse_proposals"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             qs = Proposal.objects.filter(status=ProposalStatus.PUBLISHED)
         specialty = request.query_params.get("specialty")
         if specialty:
@@ -260,18 +291,20 @@ class ProposalListView(APIView):
 
 
 class ProposalDetailView(APIView):
-    permission_classes = [AllowAny]
-
     @extend_schema(responses=ProposalSerializer)
     def get(self, request, public_id):
         p = get_object_or_404(
             Proposal.objects.select_related("tenant").prefetch_related("specialties"),
             public_id=public_id,
         )
-        if p.status != ProposalStatus.PUBLISHED:
-            if not request.user.is_authenticated or not Membership.objects.filter(
-                user=request.user, tenant=p.tenant
-            ).exists():
+        is_owner = _is_member_of(request.user, p.tenant)
+        if p.status == ProposalStatus.PUBLISHED:
+            # Conteúdo completo só para pentester cadastrado ou para o próprio dono.
+            if not is_owner and _pentester_profile_for(request.user) is None:
+                return Response({"detail": "not_found"}, status=404)
+        else:
+            # Drafts/closed/archived — só dono.
+            if not is_owner:
                 return Response({"detail": "not_found"}, status=404)
         return Response(ProposalSerializer(p).data)
 

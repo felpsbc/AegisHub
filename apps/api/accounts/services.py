@@ -5,13 +5,17 @@ import secrets
 
 import pyotp
 from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.hashers import check_password, make_password
 from django.db import transaction
 from django.http import HttpRequest
+from django.utils import timezone
 
 from accounts.models import User
 from audit.services import record_event
 from tenants.models import DocumentKind, MembershipRole, TenantType
 from tenants.services import create_tenant_for_user
+
+PENDING_MFA_TTL_SECONDS = 300
 
 
 class LoginError(Exception):
@@ -62,6 +66,7 @@ def login_with_password(
         raise LoginError("inactive")
     if user.mfa_enabled:
         request.session["pending_mfa_user"] = user.pk
+        request.session["pending_mfa_at"] = int(timezone.now().timestamp())
         raise MFARequired
     login(request, user)
     record_event(
@@ -76,32 +81,57 @@ def login_with_password(
 
 def verify_mfa(request: HttpRequest, *, code: str) -> User:
     pending = request.session.get("pending_mfa_user")
-    if not pending:
+    started_at = request.session.get("pending_mfa_at")
+    if not pending or not started_at:
         raise LoginError("no_pending_mfa")
+    if int(timezone.now().timestamp()) - int(started_at) > PENDING_MFA_TTL_SECONDS:
+        request.session.pop("pending_mfa_user", None)
+        request.session.pop("pending_mfa_at", None)
+        raise LoginError("pending_mfa_expired")
     user = User.objects.get(pk=pending)
     if not user.mfa_secret:
         raise LoginError("mfa_not_setup")
     secret = bytes(user.mfa_secret).decode("ascii")
-    if not pyotp.TOTP(secret).verify(code, valid_window=1):
-        raise LoginError("invalid_mfa")
+    used_backup = False
+    if pyotp.TOTP(secret).verify(code, valid_window=1):
+        pass
+    else:
+        # Backup codes são one-time. Comparação em tempo constante via check_password.
+        backup_codes: list[str] = list(user.mfa_backup_codes or [])
+        match_index = next(
+            (i for i, h in enumerate(backup_codes) if check_password(code, h)),
+            None,
+        )
+        if match_index is None:
+            raise LoginError("invalid_mfa")
+        backup_codes.pop(match_index)
+        user.mfa_backup_codes = backup_codes
+        user.save(update_fields=["mfa_backup_codes"])
+        used_backup = True
     request.session.pop("pending_mfa_user", None)
+    request.session.pop("pending_mfa_at", None)
     login(request, user)
     record_event(
         actor=user,
         event_type="USER_LOGIN_MFA",
         object_type="User",
         object_id=user.pk,
-        payload={},
+        payload={"backup_code": used_backup},
     )
     return user
 
 
 def setup_mfa(user: User) -> tuple[str, list[str]]:
-    """Gera segredo TOTP + 8 códigos de backup. Não ativa ainda."""
+    """Gera segredo TOTP + 8 códigos de backup. Não ativa ainda.
+
+    Backup codes são retornados em claro UMA única vez ao caller (mostrar ao usuário)
+    e persistidos como hash Argon2/PBKDF2 — `verify_mfa` consome o hash one-time.
+    """
     secret = pyotp.random_base32()
-    user.mfa_secret = secret.encode("ascii")
-    user.save(update_fields=["mfa_secret"])
     backup_codes = [base64.b32encode(secrets.token_bytes(5)).decode("ascii") for _ in range(8)]
+    user.mfa_secret = secret.encode("ascii")
+    user.mfa_backup_codes = [make_password(c) for c in backup_codes]
+    user.save(update_fields=["mfa_secret", "mfa_backup_codes"])
     return secret, backup_codes
 
 

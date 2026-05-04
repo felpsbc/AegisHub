@@ -51,8 +51,8 @@ class UserMeSerializer(serializers.ModelSerializer):
 # --- Auth in/out ---
 
 class RegisterSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField(min_length=12, write_only=True)
+    email = serializers.EmailField(max_length=254)
+    password = serializers.CharField(min_length=12, max_length=128, write_only=True)
     full_name = serializers.CharField(max_length=200)
     tenant_type = serializers.ChoiceField(choices=TenantType.choices)
     legal_name = serializers.CharField(max_length=200)
@@ -61,12 +61,12 @@ class RegisterSerializer(serializers.Serializer):
 
 
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField(write_only=True)
+    email = serializers.EmailField(max_length=254)
+    password = serializers.CharField(max_length=128, write_only=True)
 
 
 class MFASerializer(serializers.Serializer):
-    code = serializers.CharField(min_length=6, max_length=10)
+    code = serializers.CharField(min_length=6, max_length=16)
 
 
 # --- Pentesters ---
@@ -113,6 +113,7 @@ class PentesterUpdateSerializer(serializers.ModelSerializer):
     specialties = serializers.PrimaryKeyRelatedField(
         many=True, queryset=Specialty.objects.all(), required=False
     )
+    bio = serializers.CharField(max_length=4000, allow_blank=True, required=False)
 
     class Meta:
         model = PentesterProfile
@@ -151,8 +152,8 @@ class ProposalSerializer(serializers.ModelSerializer):
 
 class ProposalCreateSerializer(serializers.Serializer):
     title = serializers.CharField(min_length=8, max_length=140)
-    description = serializers.CharField()
-    scope_md = serializers.CharField()
+    description = serializers.CharField(max_length=10_000)
+    scope_md = serializers.CharField(max_length=20_000)
     budget = BudgetSerializer()
     duration_weeks = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     visibility = serializers.ChoiceField(
@@ -181,7 +182,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
 
 
 class ApplicationCreateSerializer(serializers.Serializer):
-    cover_message = serializers.CharField(min_length=20)
+    cover_message = serializers.CharField(min_length=20, max_length=4000)
     proposed_rate = serializers.DecimalField(
         max_digits=10, decimal_places=2, required=False, allow_null=True
     )

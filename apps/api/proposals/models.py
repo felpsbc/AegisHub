@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 
 from django.db import models
+from django.db.models import Q
 
 from pentesters.models import Specialty
 from tenants.models import Tenant
@@ -53,7 +54,9 @@ class Proposal(models.Model):
     class Meta:
         indexes = [
             models.Index(
-                fields=["status", "-published_at"], name="prop_status_pub_idx"
+                fields=["status", "-published_at"],
+                name="prop_status_pub_idx",
+                condition=Q(status="PUBLISHED"),
             ),
             models.Index(fields=["tenant"], name="prop_tenant_idx"),
         ]

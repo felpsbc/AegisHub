@@ -35,11 +35,11 @@ apps/api/                       # Django + DRF + uv
   fixtures/                     # specialties, certifications
 
 apps/web/                       # Next.js 15 + pnpm
-  app/(public)/                 # landing, /pentesters, /propostas (HOJE: rotas erradas, ver §6)
-  app/(auth)/                   # login, cadastro
-  app/(app)/                    # painel autenticado (empresa e pentester)
+  app/(public)/                 # landing
+  app/(auth)/                   # login, cadastro  (login/mfa e recuperar-senha pendentes)
+  app/(app)/                    # admin/, app/{dashboard,pentesters,propostas,perfil}
   components/                   # Button, Card, Field, Topbar, AppGuard...
-  lib/mock.ts                   # MOCK DATA — frontend ainda não chama API real
+  lib/                          # cn.ts, env.ts, store.ts, mock.ts (mock alimenta tudo hoje)
 
 packages/
   api-types/                    # tipos TS gerados do OpenAPI
@@ -154,7 +154,8 @@ E são aplicados assim:
 
 - **IDs públicos são UUID (`public_id`).** Nunca exponha PK numérica em URL ou response. Se você ver `/proposals/123/`, isso é bug.
 - **Dinheiro é `NUMERIC(14,2)`** com `currency` explícita. Nunca `float`.
-- **`audit_log` é append-only com hash chain.** Não tem UPDATE nem DELETE. Job diário valida a cadeia. Se você precisar "desfazer", grave evento contrário, não apague.
+- **`audit_log` é append-only com hash chain — enforced no Postgres.** Triggers `BEFORE UPDATE/DELETE/TRUNCATE` estouram exception, e `BEFORE INSERT` recomputa `prev_hash`/`self_hash` server-side (Python só envia placeholder). Se você precisar "desfazer", grave evento contrário, não apague. Validar a cadeia: `from audit.services import verify_chain; verify_chain()`.
+- **RLS está aplicada em `proposals` e `applications`.** Em dev a app conecta como owner do banco e bypassa as policies; em prod o role é `pentesthub_app` e o RLS bate. Antes de assumir que algo "está protegido por RLS", rode o smoke test (`pytest tests/test_db_hardening.py`) — ele usa `SET LOCAL ROLE pentesthub_app` pra exercitar enforcement.
 - **Senhas em Argon2id**, mínimo 12 chars (settings já cuida).
 - **Cookies**: `httpOnly`, `Secure` em prod, `SameSite=Lax`.
 - **CSRF**: header `X-CSRFToken` obrigatório em POST/PATCH/DELETE.
@@ -170,7 +171,7 @@ E são aplicados assim:
 
 3. **"O frontend já usa o backend"** — **não usa.** `apps/web/lib/mock.ts` ainda alimenta tudo. O BFF `app/api/proxy/*` está no plano mas não foi escrito. Quem for fazer essa integração precisa: criar route handlers em `app/api/proxy/[...path]/route.ts`, mover cookie de sessão para o domínio do Next, configurar CSP `connect-src 'self'`, **arrancar o mock**.
 
-4. **"As rotas `/pentesters` e `/propostas` estão em `app/(public)/`"** — é vestígio do design original (catálogo público). Como o marketplace virou auth-only, essas rotas precisam migrar para `app/(app)/` (que tem `AppGuard`) **ou** o `AppGuard` precisa ser estendido para essas rotas. Ver tarefa pendente no `CLAUDE.md` "Dívidas técnicas".
+4. **"As rotas de catálogo ainda são públicas no frontend"** — não são mais. `/app/pentesters` e `/app/propostas` vivem em `app/(app)/app/...` atrás do `AppGuard`; `app/(public)/` só tem a landing. Cuidado se você for criar nova página: se for de marketplace, ela mora em `(app)/`, não em `(public)/`.
 
 5. **"Vou cifrar relatório aqui no backend"** — não. Cifragem de relatório/anexo é **client-side via WebCrypto** antes do PUT presigned no S3. Backend só armazena ciphertext. KEK fica no KMS.
 
@@ -181,6 +182,12 @@ E são aplicados assim:
 8. **Webhook do PSP** — nunca compare HMAC com `==`. Use `hmac.compare_digest`. Sempre confira `event_id` em `webhook_events` (replay protection). Tolerância de timestamp ±5min.
 
 9. **Backup codes do MFA** — mostre em claro **uma única vez** ao usuário (na ativação). O DB só guarda hash. Não loga, não envia por e-mail, não devolve em GET.
+
+10. **"Vou rodar `DELETE FROM audit_auditlog` pra limpar dev"** — não vai dar. Trigger Postgres bloqueia. Pra zerar o banco em dev, use `docker compose down -v` (apaga o volume inteiro) e rode `migrate` + `seed_demo` de novo.
+
+11. **"Mexi nos models, vou esquecer de gerar migration"** — sempre rode `makemigrations` + faça commit do arquivo gerado. Antes de PR, `manage.py migrate --check` no CI vai te chamar. Migrations escritas à mão (RunSQL) precisam de `reverse_sql` para rollback ser possível.
+
+12. **"Vou alterar `users.email` pra ser case-sensitive de novo"** — é `CITEXT` por design. Nunca use `iexact` em queries de email; só compare igual.
 
 ---
 
@@ -200,8 +207,12 @@ docker compose exec api uv run python manage.py seed_demo
 # abrir shell Django
 docker compose exec api uv run python manage.py shell
 
-# rodar testes (quando existirem — ver dívida no CLAUDE.md)
-docker compose exec api uv run pytest
+# rodar testes (smoke do banco já existe; gates HTTP ainda são dívida)
+docker compose exec api uv run pytest tests/test_db_hardening.py -v
+
+# regenerar dump do schema (após mudar migrations)
+docker compose exec postgres pg_dump -U pentesthub --schema-only \
+  --no-owner --no-privileges pentesthub > infra/db/schema.sql
 
 # regenerar OpenAPI + tipos TS
 docker compose exec api uv run python manage.py spectacular --file schema.yml

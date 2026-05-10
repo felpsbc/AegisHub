@@ -69,6 +69,35 @@ pnpm --filter @pentesthub/api-types generate
 
 ---
 
+## Banco de dados (Postgres 16)
+
+O schema **completo e versionado** mora em `infra/db/schema.sql` (regerado via `pg_dump --schema-only`). Highlights:
+
+- **Extensões**: `pgcrypto` (gen_random_uuid, digest), `citext` (email case-insensitive), `pg_trgm` (fuzzy match), `btree_gin`.
+- **`public_id UUID`** com `DEFAULT gen_random_uuid()` server-side em todas as tabelas com identidade pública. PK numérica nunca exposta.
+- **`audit_log` append-only de verdade**: triggers `BEFORE UPDATE/DELETE/TRUNCATE` estouram exception. Cadeia de hash (`prev_hash`/`self_hash`) calculada **server-side** por trigger `BEFORE INSERT` (`audit_log_hash_chain`) — INSERT raw não consegue forjar.
+- **RLS** habilitada em `proposals_proposal` e `applications_application`. Policies usam `NULLIF(current_setting('app.tenant_id', true), '')::BIGINT`. O `TenantMiddleware` faz `SET LOCAL app.tenant_id` dentro de uma transação por request.
+- **Role separation pronta**: a migration `accounts/0002_postgres_setup` cria `pentesthub_app` (NOLOGIN, NOBYPASSRLS, statement_timeout=5s). Em dev a app conecta como owner e bypassa RLS; em prod, mude `DJANGO_DB_USER=pentesthub_app` (e dê `LOGIN` + senha à role) que o RLS passa a enforce.
+- **Busca textual full-text**: coluna `tsv tsvector` em `proposals_proposal` e `pentesters_pentesterprofile`, mantida por trigger, indexada com GIN. Trigram (`gin_trgm_ops`) em `proposals_proposal.title` para fuzzy.
+- **Índices parciais** que o doc pede: `proposals (status, -published_at) WHERE status='PUBLISHED'`, `pentester_profiles (availability, hourly_rate) WHERE availability='OPEN'`.
+
+Comandos relacionados:
+
+```bash
+# Smoke test do banco (RLS + audit append-only + hash chain + tsvector + citext)
+docker compose exec api uv run pytest tests/test_db_hardening.py -v
+
+# Regenerar schema dump (após mudanças em migrations)
+docker compose exec postgres pg_dump -U pentesthub --schema-only --no-owner --no-privileges pentesthub > infra/db/schema.sql
+
+# Validar cadeia de hashes do audit_log
+docker compose exec api uv run python manage.py shell -c "from audit.services import verify_chain; print(verify_chain())"
+```
+
+> **Quando subir pra produção:** rode a smoke test no staging, verifique que `pentesthub_app` tem LOGIN+senha, troque `DJANGO_DB_USER` no env. Sem isso, RLS é teatro.
+
+---
+
 ## Estrutura
 
 ```
@@ -84,15 +113,16 @@ apps/
     api/                     # DRF: serializers, views, urls, exception handler
     infra/                   # kms (LocalKMS dev), storage (MinIO/S3), gateways/
     fixtures/                # specialties, certifications
+    tests/                   # pytest-django (test_db_hardening.py inicial)
     pyproject.toml           # uv + dev deps
     manage.py
   web/                       # Next.js 15 (pnpm)
-    app/(public)/            # landing, /pentesters, /propostas (SSR)
-    app/(auth)/              # login, login/mfa, cadastro, recuperar-senha
-    app/(app)/               # dashboard, pentesters, propostas, candidaturas, perfil
-    app/api/proxy/[...path]  # BFF: encaminha browser -> Django interno
-    components/              # Button, Card, Pill, Avatar, Field, Markdown, ...
-    lib/                     # api (server), client-api, session, format, types, env, cn
+    app/(public)/            # landing
+    app/(auth)/              # login, cadastro  (login/mfa e recuperar-senha pendentes)
+    app/(app)/               # admin/, app/{dashboard,pentesters,propostas,perfil}
+    # app/api/proxy/[...path] # BFF planejado — ainda não escrito
+    components/              # Button, Card, Pill, Avatar, Field, Topbar, AppGuard, ...
+    lib/                     # cn.ts, env.ts, store.ts, mock.ts (mock alimenta tudo hoje)
     styles/                  # tokens.css (§7.5), globals.css
 
 packages/
@@ -101,10 +131,11 @@ packages/
 
 infra/
   docker/                    # api.Dockerfile (uv), web.Dockerfile (pnpm, standalone)
+  db/                        # schema.sql versionado (pg_dump --schema-only)
 
 docker-compose.yml           # postgres, redis, minio, mailhog, api, web
 .env.example                 # template de variáveis
-Taskfile.yml                 # atalhos para fluxos comuns
+Taskfile.yml / Makefile      # atalhos para fluxos comuns (`task <alvo>` ou `make <alvo>`)
 ```
 
 ---
@@ -134,6 +165,11 @@ curl -s -b /tmp/c http://localhost:8000/api/v1/auth/me | jq
 curl -s -b /tmp/c http://localhost:8000/api/v1/pentesters | jq '.[0].headline'
 
 # 5. Logue como pentester para ver o feed de propostas (sem ?mine=1)
+curl -s -c /tmp/c2 -X GET http://localhost:8000/api/v1/auth/csrf
+CSRF2=$(grep pentesthub_csrf /tmp/c2 | awk '{print $7}')
+curl -s -b /tmp/c2 -c /tmp/c2 -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" -H "X-CSRFToken: $CSRF2" \
+  -d '{"email":"carlos@solo.com","password":"carlos-demo-pass-2026"}'
 curl -s -b /tmp/c2 http://localhost:8000/api/v1/proposals | jq '.[0].title'
 ```
 
@@ -147,7 +183,7 @@ Fluxo manual no navegador (após o BFF/integração real existir — hoje o fron
 6. `/app/propostas` → ver feed (só pentester vê). Abra a proposta → **Candidatar-se**.
 7. Logout. Logue como `ana@acme.com.br` → veja a candidatura → **Shortlist** / **Aceitar** / **Rejeitar**.
 
-> ⚠️ Anônimo nunca vê dados do marketplace. As rotas `/pentesters` e `/propostas` no `(public)/` precisam virar `(app)/` ou redirecionar para `/login` — ajuste pendente no frontend (ver `docs/ONBOARDING.md`).
+> ⚠️ Anônimo nunca vê dados do marketplace. As rotas de catálogo já vivem em `app/(app)/app/{pentesters,propostas}` atrás do `AppGuard`; `(public)/` guarda apenas a landing.
 
 ---
 
@@ -155,7 +191,7 @@ Fluxo manual no navegador (após o BFF/integração real existir — hoje o fron
 
 - Cookie de sessão `httpOnly`+`Secure`+`SameSite=Lax`. Browser fala com Next; Next fala com Django via BFF (`/api/proxy/*`).
 - Senhas em `argon2id` (PASSWORD_HASHERS), mínimo 12 chars, lockout via `django-axes`.
-- Múltiplas camadas de auth: DRF `IsAuthenticated`, checks adicionais em service e (em produção) RLS no Postgres. RLS está habilitada na intenção (managers tenant-aware), mas as policies SQL serão ativadas com migration dedicada na próxima release.
+- Múltiplas camadas de auth: DRF `IsAuthenticated`, checks adicionais em service, e RLS no Postgres em `proposals_proposal` + `applications_application` com policies que casam `tenant_id = current_setting('app.tenant_id')`. O `TenantMiddleware` faz `SET LOCAL app.tenant_id = …` dentro de uma transação por request. Em dev, a app conecta como owner do banco e bypassa RLS — o smoke test em `apps/api/tests/test_db_hardening.py` usa `SET LOCAL ROLE pentesthub_app` pra provar que as policies bloqueiam. Em prod, troque `DJANGO_DB_USER=pentesthub_app` e o RLS passa a enforce.
 - `audit_log` append-only com hash chain (`SHA256(prev_hash || canonical_json(payload))`). Verificação via `audit.services.verify_chain`.
 - IDs públicos sempre UUID; PK numérica nunca exposta.
 - Money em `NUMERIC(14,2)`; nunca float.
@@ -171,7 +207,7 @@ Fluxo manual no navegador (após o BFF/integração real existir — hoje o fron
 - Webhooks Pagar.me (`infra/gateways/fake.py` já implementa o protocolo)
 - Verificação humana de certificações (admin queue)
 - Disputas, ratings, NFS-e
-- RLS policies SQL ativadas (managers já filtram por tenant; falta o `ENABLE ROW LEVEL SECURITY` por migration)
+- Particionamento de `audit_log` por mês (tabela única hoje; ver dívida em `CLAUDE.md`).
 - Testes Playwright e suite parametrizada de autorização
 
 A arquitetura completa está em `PENTESTHUB-ARQUITETURA.md`. As decisões técnicas que diferem do doc original (Next.js no lugar de Vite, BFF, etc.) estão em `CLAUDE.md`.

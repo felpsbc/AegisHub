@@ -42,7 +42,7 @@ O doc original prevê **React + Vite** (ADR-007). Decisão posterior trocou o fr
 
 - **Security is the product.** Falha de autorização ou vazamento de relatório encerra o produto. Defesa em profundidade: policy na view + service + RLS no Postgres.
 - **Views nunca fazem escrita no ORM diretamente.** Toda mutação passa por `domain/services`, em transação, com `AuditLog` e side effects (Celery) na mesma unidade.
-- **Toda tabela de domínio carrega `tenant_id` + RLS habilitada.** Conexão executa `SET LOCAL app.tenant_id = :id` por request. Há `Model.objects` (tenant-aware) e `Model.objects_unsafe` (apenas jobs admin auditados).
+- **Toda tabela de domínio carrega `tenant_id`.** Conexão executa `SET LOCAL app.tenant_id = :id` por request via `TenantMiddleware` (envolve a request em `transaction.atomic()` pra o GUC ter escopo). RLS está aplicada em `proposals_proposal` e `applications_application` com `NULLIF(current_setting(...), '')::BIGINT`. Em dev, owner Postgres bypassa RLS — para enforce real, conectar como `pentesthub_app` (role criada na migration `accounts/0002_postgres_setup`). `Model.objects_unsafe` previsto pra jobs admin auditados; ainda não em uso.
 - **Apps Django não importam models de outros apps.** Comunicação cross-context é via `services`. Code review rejeita imports cruzados.
 - **IDs públicos são UUID (`public_id`).** Nunca expor PK numérica na API ou na URL.
 - **Dinheiro é `NUMERIC(14,2)`** com `currency` explícita. Nunca float.
@@ -60,24 +60,22 @@ O doc original prevê **React + Vite** (ADR-007). Decisão posterior trocou o fr
   - `GET /proposals/{id}` PUBLISHED libera para pentester ou dono do tenant; non-PUBLISHED só dono. Retorna **404** (não 403) para não vazar existência.
   - Anônimo nunca acessa dados de marketplace; só landing/marketing/`/auth/*`/`/specialties`. Os gates moram em `apps/api/api/views.py` (helpers `_has_company_membership`, `_pentester_profile_for`, `_is_member_of`). Ainda não foram extraídos para DRF Permission classes — dívida técnica anotada em `docs/ONBOARDING.md`.
 
-## Quando (eventualmente) houver código
-
-A estrutura proposta no brainstorm é:
+## Estrutura do repo (estado atual + alvo)
 
 ```
 pentesthub/
-├── apps/api/         # Django: pentesthub/, accounts/, tenants/, pentesters/,
-│                     # proposals/, contracts/, payments/, messaging/, reports/,
-│                     # audit/, admin_ops/, notifications/, infra/{gateways,kms,storage,celery}, api/
-├── apps/web/         # Next.js App Router: app/(public|auth|app|admin)/, app/api/proxy/,
-│                     # features/, components/, lib/, hooks/
-├── packages/api-types/    # gerado via openapi-typescript
+├── apps/api/         # Django (Fase 1): pentesthub/, accounts/, tenants/, pentesters/,
+│                     # proposals/, applications/, audit/, api/, infra/{gateways,kms,storage}
+│                     # Fase 2+: contracts/, payments/, messaging/, reports/, admin_ops/, notifications/
+├── apps/web/         # Next.js App Router: app/{(public),(auth),(app)}/, components/, lib/, styles/
+│                     # Pendente: app/api/proxy/[...path] (BFF), features/, hooks/
+├── packages/api-types/    # gerado via openapi-typescript (já existe; gerar após `manage.py spectacular`)
 ├── packages/schemas/      # Zod schemas compartilhados
-├── infra/terraform/, infra/docker/, infra/compose/
-└── .github/workflows/     # ci-api, ci-web, contract (diff openapi), security, deploy-*
+├── infra/docker/          # api.Dockerfile, web.Dockerfile (Fase 2: terraform/, compose extra)
+└── .github/workflows/     # alvo Fase 2: ci-api, ci-web, contract (diff openapi), security, deploy-*
 ```
 
-Comandos só serão definidos quando os manifests forem criados. Não suponha que existem `pnpm test`, `pytest`, `make` etc. até ver os arquivos correspondentes (`pyproject.toml`, `package.json`, `Taskfile.yml`).
+Comandos disponíveis: `Taskfile.yml` (preferir `task <alvo>` se você tem `task` instalado) e `Makefile` espelham os mesmos atalhos (`up`, `seed`, `api-shell`, `api-migrate`, `api-test`, `api-schema`, `web-gen-types`). Pytest, ESLint e gerador de tipos já existem — confira o manifest correspondente (`apps/api/pyproject.toml`, `apps/web/package.json`, `package.json` da raiz) antes de inventar comando novo.
 
 ## Dívidas técnicas conhecidas (Fase 2)
 
@@ -90,5 +88,8 @@ Mantenha esta lista atualizada — itens aqui são candidatos naturais a próxim
 - **Sem CSP/HSTS no Next**; `next.config.ts` traz só os headers básicos.
 - **Sem rate-limit dedicado em `/auth/login`**; o lockout do `django-axes` (5/h) cobre brute-force, mas falta throttle por IP no DRF.
 - **`SECRET_KEY` cai num default em dev**; em produção tem que vir do ambiente — proteger com `required=True` quando `DEBUG=False`.
-- **Sem testes de regressão para os gates de autorização** — adicionar antes de mexer em `views.py` de novo.
-- **RLS policies SQL ainda não aplicadas** (managers tenant-aware filtram em Python; policies do Postgres ficaram para release dedicada).
+- **Sem testes de regressão para os gates de autorização HTTP** — adicionar antes de mexer em `views.py` de novo. (O smoke test do banco em `apps/api/tests/test_db_hardening.py` cobre RLS/audit/tsvector/citext, não a camada de view.)
+- **RLS não enforce em dev**: as policies estão aplicadas em `proposals_proposal` e `applications_application` (ver migrations `0003_rls`/`0002_rls`), mas o owner Postgres bypassa. Em prod, setar `DJANGO_DB_USER=pentesthub_app` (role criada na migration `accounts/0002_postgres_setup`) e a app passa a estar sujeita ao RLS. Smoke test usa `SET LOCAL ROLE pentesthub_app` pra provar que as policies bloqueiam.
+- **`audit_log` não particionado**. Tabela única hoje. Em escala (>10M linhas) virar `PARTITION BY RANGE (occurred_at)` com job mensal pra criar próxima partição. Precisa ajustar PK pra incluir `occurred_at`.
+- **Aplicação ainda conecta como owner em dev**, então RLS é teatro local. Quem montar staging precisa lembrar de passar `DJANGO_DB_USER=pentesthub_app`.
+- **Sem job de `verify_chain` periódico** — função existe (`audit.services.verify_chain`), falta agendar via Celery beat e alertar sev0 em quebra.

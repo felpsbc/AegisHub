@@ -9,19 +9,23 @@ import { PropostaCard } from "@/components/PropostaCard";
 import { Stat } from "@/components/Stat";
 import { StatusDot } from "@/components/StatusDot";
 import { Verified } from "@/components/Verified";
-import {
-  empresaUser,
-  hashColor,
-  pentesterUser,
-  pentesters,
-  propostas,
-} from "@/lib/mock";
-import { useAuth } from "@/lib/store";
+import { accountFromUser, useSession, type User } from "@/lib/api";
+import { pentesters, propostas } from "@/lib/mock";
 
 export default function DashboardPage() {
-  const account = useAuth((s) => s.account);
-  if (account === "empresa") return <DashEmpresa />;
-  if (account === "pentester") return <DashPentester />;
+  const { data: user, isLoading } = useSession();
+  if (isLoading || !user) {
+    return (
+      <div className="container-x" style={{ padding: "32px 0" }}>
+        <span className="muted" style={{ fontSize: 13 }}>
+          Carregando…
+        </span>
+      </div>
+    );
+  }
+  const account = accountFromUser(user);
+  if (account === "empresa") return <DashEmpresa user={user} />;
+  if (account === "pentester") return <DashPentester user={user} />;
   return <DashAdminRedirect />;
 }
 
@@ -33,13 +37,14 @@ function DashAdminRedirect() {
   return null;
 }
 
-function DashEmpresa() {
+function DashEmpresa({ user }: { user: User }) {
   const router = useRouter();
-  const empresa = empresaUser;
+  const tenant = user.memberships.find((m) => m.tenant.type === "COMPANY")?.tenant;
+  const empresaNome = tenant?.legal_name ?? user.full_name;
   const candidatos = pentesters.slice(0, 4);
   return (
     <div className="container-x" style={{ padding: "32px 0 64px" }}>
-      <h1 className="h1 mb-4">Bom dia, {empresa.nome.split(" ")[0]}</h1>
+      <h1 className="h1 mb-4">Bom dia, {empresaNome.split(" ")[0]}</h1>
       <div className="row gap-3 mb-4 flex-wrap">
         <Stat num={2} label="Contratações ativas" style={{ flex: 1, minWidth: 180 }} />
         <Stat num={1} label="Proposta publicada" style={{ flex: 1, minWidth: 180 }} />
@@ -195,12 +200,11 @@ function DashEmpresa() {
   );
 }
 
-function DashPentester() {
+function DashPentester({ user }: { user: User }) {
   const router = useRouter();
-  const p = pentesterUser;
   return (
     <div className="container-x" style={{ padding: "32px 0 64px" }}>
-      <h1 className="h1 mb-4">Olá, {p.nome.split(" ")[0]}</h1>
+      <h1 className="h1 mb-4">Olá, {user.full_name.split(" ")[0]}</h1>
 
       <div className="card card-pad-lg mb-4">
         <div className="row gap-3 flex-wrap">
@@ -208,46 +212,43 @@ function DashPentester() {
             <span className="muted" style={{ fontSize: 12 }}>
               Status atual
             </span>
-            <StatusDot status={p.status} />
+            <StatusDot status="open" />
           </div>
           <div className="col" style={{ flex: 1, minWidth: 200 }}>
             <span className="muted" style={{ fontSize: 12 }}>
               Seu valor por hora
             </span>
-            <span className="row" style={{ gap: 2, alignItems: "baseline" }}>
-              <span className="rate-value">R$ {p.rate}</span>
-              <span className="rate-unit">/h</span>
+            <span className="muted" style={{ fontSize: 13 }}>
+              Defina no perfil
             </span>
           </div>
           <div className="col" style={{ flex: 1, minWidth: 200 }}>
             <span className="muted" style={{ fontSize: 12 }}>
               Faturamento (mês)
             </span>
-            <span className="rate-value">R$ 24.840</span>
+            <span className="rate-value">R$ 0</span>
           </div>
           <div className="col" style={{ flex: 1, minWidth: 200 }}>
             <span className="muted" style={{ fontSize: 12 }}>
               Próximo pagamento
             </span>
-            <span style={{ fontSize: 15 }}>05/05/2026</span>
+            <span style={{ fontSize: 15 }} className="muted">
+              —
+            </span>
           </div>
         </div>
       </div>
 
       <div className="row gap-3 mb-4 flex-wrap">
-        <Stat num={3} label="Candidaturas ativas" style={{ flex: 1, minWidth: 180 }} />
-        <Stat num={1} label="Projeto em andamento" style={{ flex: 1, minWidth: 180 }} />
-        <Stat num={7} label="Convites diretos" style={{ flex: 1, minWidth: 180 }} />
-        <Stat
-          num={p.rating.toFixed(1)}
-          label={`Rating · ${p.projetos} projetos`}
-          style={{ flex: 1, minWidth: 180 }}
-        />
+        <Stat num={0} label="Candidaturas ativas" style={{ flex: 1, minWidth: 180 }} />
+        <Stat num={0} label="Projeto em andamento" style={{ flex: 1, minWidth: 180 }} />
+        <Stat num={0} label="Convites diretos" style={{ flex: 1, minWidth: 180 }} />
+        <Stat num="—" label="Rating · sem projetos" style={{ flex: 1, minWidth: 180 }} />
       </div>
 
       <div className="card card-pad-lg mb-4">
         <div className="row mb-4" style={{ justifyContent: "space-between" }}>
-          <h2 className="h2">Propostas que combinam com seu perfil</h2>
+          <h2 className="h2">Propostas abertas</h2>
           <button
             type="button"
             className="muted"
@@ -265,44 +266,6 @@ function DashPentester() {
         <div className="list-propostas">
           {propostas.slice(0, 3).map((pr) => (
             <PropostaCard key={pr.id} pr={pr} />
-          ))}
-        </div>
-      </div>
-
-      <div className="card card-pad-lg">
-        <h2 className="h2 mb-4">Convites diretos</h2>
-        <div className="col" style={{ gap: 0 }}>
-          {[
-            { empresa: "Cíclica Saúde", titulo: "Cloud review AWS", valor: 28000 },
-            {
-              empresa: "Granito Capital",
-              titulo: "Phishing dirigido C-level",
-              valor: 18000,
-            },
-          ].map((c, i, arr) => (
-            <div
-              key={c.titulo}
-              className="row gap-3"
-              style={{
-                padding: "14px 0",
-                borderBottom:
-                  i < arr.length - 1 ? "0.5px solid var(--border)" : "none",
-              }}
-            >
-              <Avatar name={c.empresa} color={hashColor(c.empresa)} />
-              <div className="col" style={{ flex: 1 }}>
-                <strong style={{ fontWeight: 500 }}>{c.titulo}</strong>
-                <span className="muted" style={{ fontSize: 13 }}>
-                  de {c.empresa}
-                </span>
-              </div>
-              <strong style={{ fontWeight: 500 }}>
-                R$ {c.valor.toLocaleString("pt-BR")}
-              </strong>
-              <button className="btn btn-sm" type="button">
-                Ver
-              </button>
-            </div>
           ))}
         </div>
       </div>

@@ -10,6 +10,7 @@ from django.db import transaction
 from django.http import HttpRequest
 from django.utils import timezone
 
+from accounts.crypto import decrypt_mfa_secret, encrypt_mfa_secret
 from accounts.models import User
 from audit.services import record_event
 from tenants.models import DocumentKind, MembershipRole, TenantType
@@ -91,7 +92,7 @@ def verify_mfa(request: HttpRequest, *, code: str) -> User:
     user = User.objects.get(pk=pending)
     if not user.mfa_secret:
         raise LoginError("mfa_not_setup")
-    secret = bytes(user.mfa_secret).decode("ascii")
+    secret = decrypt_mfa_secret(user.mfa_secret)
     used_backup = False
     if pyotp.TOTP(secret).verify(code, valid_window=1):
         pass
@@ -129,7 +130,7 @@ def setup_mfa(user: User) -> tuple[str, list[str]]:
     """
     secret = pyotp.random_base32()
     backup_codes = [base64.b32encode(secrets.token_bytes(5)).decode("ascii") for _ in range(8)]
-    user.mfa_secret = secret.encode("ascii")
+    user.mfa_secret = encrypt_mfa_secret(secret)
     user.mfa_backup_codes = [make_password(c) for c in backup_codes]
     user.save(update_fields=["mfa_secret", "mfa_backup_codes"])
     return secret, backup_codes
@@ -138,7 +139,7 @@ def setup_mfa(user: User) -> tuple[str, list[str]]:
 def enable_mfa(user: User, *, code: str) -> None:
     if not user.mfa_secret:
         raise LoginError("mfa_not_setup")
-    secret = bytes(user.mfa_secret).decode("ascii")
+    secret = decrypt_mfa_secret(user.mfa_secret)
     if not pyotp.TOTP(secret).verify(code, valid_window=1):
         raise LoginError("invalid_mfa")
     user.mfa_enabled = True

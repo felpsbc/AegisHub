@@ -5,8 +5,8 @@ import { Plus, Search } from "lucide-react";
 
 import { CheckboxRow } from "@/components/CheckboxRow";
 import { PropostaCard } from "@/components/PropostaCard";
+import { accountFromUser, useSession } from "@/lib/api";
 import { propostas, type Proposta, type TipoTeste } from "@/lib/mock";
-import { useAuth } from "@/lib/store";
 
 const allTags = [
   "Web app",
@@ -23,7 +23,8 @@ const allTags = [
 type RemotoSel = "all" | "remoto" | "presencial";
 
 export default function PropostasCatalogPage() {
-  const account = useAuth((s) => s.account);
+  const { data: user } = useSession();
+  const account = accountFromUser(user);
   const [tagsSel, setTags] = useState<Set<string>>(new Set());
   const [budgetMin, setBudgetMin] = useState(10000);
   const [tipoSel, setTipoSel] = useState<Set<TipoTeste>>(new Set());

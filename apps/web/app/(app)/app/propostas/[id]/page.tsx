@@ -6,14 +6,16 @@ import { ArrowLeft, Check, Clock, Users } from "lucide-react";
 
 import { Avatar } from "@/components/Avatar";
 import { Tag } from "@/components/Tag";
+import { accountFromUser, useSession } from "@/lib/api";
 import { getProposta, propostas } from "@/lib/mock";
-import { useAuth, useToast } from "@/lib/store";
+import { useToast } from "@/lib/store";
 
 type Props = { params: Promise<{ id: string }> };
 
 export default function PropostaDetailPage({ params }: Props) {
   const { id } = use(params);
-  const account = useAuth((s) => s.account);
+  const { data: user } = useSession();
+  const account = accountFromUser(user);
   const showToast = useToast((s) => s.show);
   const [applied, setApplied] = useState(false);
 

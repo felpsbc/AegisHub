@@ -3,36 +3,6 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 
-export type Account = "empresa" | "pentester" | "admin";
-
-type AuthState = {
-  account: Account | null;
-  hydrated: boolean;
-  setAccount: (account: Account | null) => void;
-  logout: () => void;
-  setHydrated: () => void;
-};
-
-export const useAuth = create<AuthState>()(
-  persist(
-    (set) => ({
-      account: null,
-      hydrated: false,
-      setAccount: (account) => set({ account }),
-      logout: () => set({ account: null }),
-      setHydrated: () => set({ hydrated: true }),
-    }),
-    {
-      name: "aegishub.auth",
-      storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ account: state.account }),
-      onRehydrateStorage: () => (state) => {
-        state?.setHydrated();
-      },
-    },
-  ),
-);
-
 type Theme = "light" | "dark";
 
 type ThemeState = {

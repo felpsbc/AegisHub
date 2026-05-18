@@ -3,20 +3,21 @@
 import { useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 
-import { useAuth } from "@/lib/store";
+import { useSession } from "@/lib/api";
 
 export function AppGuard({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const account = useAuth((s) => s.account);
-  const hydrated = useAuth((s) => s.hydrated);
+  const { data, isLoading, isError } = useSession();
+
+  const authenticated = !!data;
 
   useEffect(() => {
-    if (hydrated && !account) {
+    if (!isLoading && !authenticated && !isError) {
       router.replace("/login");
     }
-  }, [hydrated, account, router]);
+  }, [isLoading, authenticated, isError, router]);
 
-  if (!hydrated) {
+  if (isLoading) {
     return (
       <div className="container-x" style={{ padding: "32px 0" }}>
         <span className="muted" style={{ fontSize: 13 }}>
@@ -26,7 +27,7 @@ export function AppGuard({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!account) return null;
+  if (!authenticated) return null;
 
   return <>{children}</>;
 }

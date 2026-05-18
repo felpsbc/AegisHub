@@ -3,14 +3,10 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Bell, Moon, Sun } from "lucide-react";
+import { Bell, LogOut, Moon, Sun } from "lucide-react";
 
-import {
-  adminUser,
-  empresaUser,
-  pentesterUser,
-} from "@/lib/mock";
-import { useAuth, useTheme } from "@/lib/store";
+import { accountFromUser, useLogout, useSession } from "@/lib/api";
+import { useTheme } from "@/lib/store";
 
 import { Avatar } from "./Avatar";
 import { Logo } from "./Logo";
@@ -18,25 +14,34 @@ import { Logo } from "./Logo";
 export function Topbar() {
   const pathname = usePathname() ?? "/";
   const router = useRouter();
-  const account = useAuth((s) => s.account);
   const theme = useTheme((s) => s.theme);
   const toggleTheme = useTheme((s) => s.toggle);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  const { data: user } = useSession();
+  const logout = useLogout();
+  const account = accountFromUser(user);
 
   const inApp = pathname.startsWith("/app") || pathname.startsWith("/admin");
   const onCatalog =
     pathname.startsWith("/app/pentesters") || pathname.startsWith("/app/propostas");
   const catView = pathname.startsWith("/app/pentesters") ? "pentesters" : "propostas";
 
-  const user =
-    account === "empresa"
-      ? empresaUser
-      : account === "pentester"
-        ? pentesterUser
-        : account === "admin"
-          ? adminUser
-          : null;
+  const displayName = user
+    ? account === "empresa"
+      ? user.memberships.find((m) => m.tenant.type === "COMPANY")?.tenant.legal_name ??
+        user.full_name
+      : user.full_name
+    : null;
+
+  const handleLogout = async () => {
+    try {
+      await logout.mutateAsync();
+    } finally {
+      router.replace("/login");
+    }
+  };
 
   return (
     <div className="topbar">
@@ -45,7 +50,7 @@ export function Topbar() {
           <Logo />
         </Link>
 
-        {mounted && inApp && account !== "admin" && account !== null && (
+        {mounted && inApp && user && account !== "admin" && (
           <div className="toggle" role="tablist" aria-label="Modo de visualização">
             <button
               className={catView === "pentesters" && onCatalog ? "active" : ""}
@@ -66,7 +71,7 @@ export function Topbar() {
           </div>
         )}
 
-        {mounted && inApp && (
+        {mounted && inApp && user && (
           <nav className="nav">
             <Link
               href="/app/dashboard"
@@ -115,7 +120,7 @@ export function Topbar() {
           </div>
         )}
 
-        {mounted && inApp && user && (
+        {mounted && inApp && user && displayName && (
           <div className="row gap-3">
             <button
               className="icon-btn"
@@ -130,8 +135,18 @@ export function Topbar() {
             <button className="icon-btn" aria-label="Notificações" type="button">
               <Bell size={16} />
             </button>
+            <button
+              className="icon-btn"
+              aria-label="Sair"
+              title="Sair"
+              type="button"
+              onClick={handleLogout}
+              disabled={logout.isPending}
+            >
+              <LogOut size={16} />
+            </button>
             <Link href="/app/perfil" aria-label="Conta">
-              <Avatar name={user.nome} color={user.color} size="sm" />
+              <Avatar name={displayName} size="sm" />
             </Link>
           </div>
         )}

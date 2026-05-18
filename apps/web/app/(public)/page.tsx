@@ -1,17 +1,10 @@
-"use client";
-
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { ArrowRight, Check, DollarSign, Shield } from "lucide-react";
 
-import { Button } from "@/components/Button";
 import { SiteFooter } from "@/components/SiteFooter";
 import { Verified } from "@/components/Verified";
-import { useAuth } from "@/lib/store";
 
 export default function Landing() {
-  const router = useRouter();
-  const setAccount = useAuth((s) => s.setAccount);
-
   return (
     <>
       <div className="container-x hero">
@@ -21,25 +14,12 @@ export default function Landing() {
           comercial, sem RFP de 60 dias. Você publica o escopo, recebe candidaturas, contrata.
         </p>
         <div className="hero-cta">
-          <Button
-            variant="primary"
-            size="lg"
-            onClick={() => {
-              setAccount("empresa");
-              router.push("/app/pentesters");
-            }}
-          >
+          <Link href="/cadastro" className="btn btn-primary btn-lg">
             Sou empresa <ArrowRight size={14} />
-          </Button>
-          <Button
-            size="lg"
-            onClick={() => {
-              setAccount("pentester");
-              router.push("/app/propostas");
-            }}
-          >
+          </Link>
+          <Link href="/cadastro" className="btn btn-lg">
             Sou pentester <ArrowRight size={14} />
-          </Button>
+          </Link>
         </div>
         <div
           className="row gap-4 mt-6"
@@ -79,15 +59,9 @@ export default function Landing() {
             </li>
           </ul>
           <div className="mt-4">
-            <Button
-              size="sm"
-              onClick={() => {
-                setAccount("empresa");
-                router.push("/app/pentesters");
-              }}
-            >
-              Ver catálogo de pentesters <ArrowRight size={13} />
-            </Button>
+            <Link href="/cadastro" className="btn btn-sm">
+              Criar conta de empresa <ArrowRight size={13} />
+            </Link>
           </div>
         </div>
 
@@ -111,15 +85,9 @@ export default function Landing() {
             </li>
           </ul>
           <div className="mt-4">
-            <Button
-              size="sm"
-              onClick={() => {
-                setAccount("pentester");
-                router.push("/app/propostas");
-              }}
-            >
-              Ver propostas abertas <ArrowRight size={13} />
-            </Button>
+            <Link href="/cadastro" className="btn btn-sm">
+              Criar conta de pentester <ArrowRight size={13} />
+            </Link>
           </div>
         </div>
       </div>

@@ -7,36 +7,47 @@ import { Avatar } from "@/components/Avatar";
 import { Field, Input, Textarea } from "@/components/Field";
 import { Pill } from "@/components/Pill";
 import { Verified } from "@/components/Verified";
-import { adminUser, empresaUser, pentesterUser } from "@/lib/mock";
-import { useAuth, useToast } from "@/lib/store";
+import { accountFromUser, useSession, type User } from "@/lib/api";
+import { useToast } from "@/lib/store";
 
 export default function PerfilPage() {
-  const account = useAuth((s) => s.account);
+  const { data: user, isLoading } = useSession();
 
-  if (account === "pentester") return <PentesterPerfil />;
-  if (account === "empresa") return <EmpresaPerfil />;
-  return <AdminPerfil />;
+  if (isLoading) {
+    return (
+      <div className="container-x" style={{ padding: "32px 0" }}>
+        <span className="muted" style={{ fontSize: 13 }}>
+          Carregando…
+        </span>
+      </div>
+    );
+  }
+  if (!user) return null;
+
+  const account = accountFromUser(user);
+  if (account === "pentester") return <PentesterPerfil user={user} />;
+  if (account === "empresa") return <EmpresaPerfil user={user} />;
+  return <AdminPerfil user={user} />;
 }
 
-function PentesterPerfil() {
-  const p = pentesterUser;
+function PentesterPerfil({ user }: { user: User }) {
   const showToast = useToast((s) => s.show);
-  const [rate, setRate] = useState(p.rate);
-  const [status, setStatus] = useState(p.status);
+  const [rate, setRate] = useState(280);
+  const [status, setStatus] = useState<"open" | "busy">("open");
 
   return (
     <div className="container-x" style={{ padding: "32px 0 64px", maxWidth: 800 }}>
       <h1 className="h1 mb-4">Seu perfil</h1>
       <div className="card card-pad-lg">
         <div className="row gap-3">
-          <Avatar name={p.nome} color={p.color} size="lg" />
+          <Avatar name={user.full_name} size="lg" />
           <div className="col" style={{ flex: 1, gap: 2 }}>
             <div className="row gap-2">
-              <strong style={{ fontWeight: 500 }}>{p.nome}</strong>
-              <Verified />
+              <strong style={{ fontWeight: 500 }}>{user.full_name}</strong>
+              {user.mfa_enabled && <Verified title="MFA ativado" />}
             </div>
             <span className="muted" style={{ fontSize: 13 }}>
-              {p.handle}
+              {user.email}
             </span>
           </div>
         </div>
@@ -85,18 +96,18 @@ function PentesterPerfil() {
         </div>
 
         <Field label="Bio">
-          <Textarea rows={3} defaultValue={p.bio} />
+          <Textarea rows={3} placeholder="Conte um pouco sobre você e seu trabalho." />
         </Field>
 
         <div className="row gap-3 mt-4">
           <div style={{ flex: 1 }}>
             <Field label="Cidade">
-              <Input defaultValue={p.cidade} />
+              <Input placeholder="Cidade, UF" />
             </Field>
           </div>
           <div style={{ flex: 1 }}>
             <Field label="Idiomas">
-              <Input defaultValue={p.idiomas.join(", ")} />
+              <Input placeholder="Português, Inglês" />
             </Field>
           </div>
         </div>
@@ -104,15 +115,6 @@ function PentesterPerfil() {
         <div className="mt-4">
           <span className="label">Especialidades</span>
           <div className="chips">
-            {p.especialidades.map((e) => (
-              <span
-                key={e}
-                className="pill pill-active"
-                style={{ cursor: "default" }}
-              >
-                {e} <X size={11} />
-              </span>
-            ))}
             <Pill>
               <Plus size={11} /> adicionar
             </Pill>
@@ -122,21 +124,6 @@ function PentesterPerfil() {
         <div className="mt-4">
           <span className="label">Certificações</span>
           <div className="chips">
-            {p.certs.map((c) => (
-              <span
-                key={c}
-                className="row gap-2"
-                style={{
-                  padding: "6px 10px",
-                  border: "0.5px solid var(--border)",
-                  borderRadius: 999,
-                  fontSize: 13,
-                }}
-              >
-                <Verified title="Verificada" />
-                {c}
-              </span>
-            ))}
             <Pill>
               <Plus size={11} /> enviar para verificação
             </Pill>
@@ -157,19 +144,21 @@ function PentesterPerfil() {
   );
 }
 
-function EmpresaPerfil() {
-  const e = empresaUser;
+function EmpresaPerfil({ user }: { user: User }) {
   const showToast = useToast((s) => s.show);
+  const tenant = user.memberships.find((m) => m.tenant.type === "COMPANY")?.tenant;
+  const legalName = tenant?.legal_name ?? user.full_name;
+
   return (
     <div className="container-x" style={{ padding: "32px 0 64px", maxWidth: 800 }}>
       <h1 className="h1 mb-4">Perfil da empresa</h1>
       <div className="card card-pad-lg">
         <div className="row gap-3">
-          <Avatar name={e.nome} color={e.color} size="lg" />
+          <Avatar name={legalName} size="lg" />
           <div className="col" style={{ flex: 1, gap: 2 }}>
-            <strong style={{ fontWeight: 500 }}>{e.nome}</strong>
+            <strong style={{ fontWeight: 500 }}>{legalName}</strong>
             <span className="muted" style={{ fontSize: 13 }}>
-              {e.setor} · {e.tamanho}
+              {user.email}
             </span>
           </div>
         </div>
@@ -177,32 +166,29 @@ function EmpresaPerfil() {
         <div className="row gap-3 mb-2 flex-wrap">
           <div style={{ flex: 1, minWidth: 240 }}>
             <Field label="CNPJ">
-              <Input defaultValue={e.cnpj} />
+              <Input placeholder="00.000.000/0000-00" />
             </Field>
           </div>
           <div style={{ flex: 1, minWidth: 240 }}>
             <Field label="Setor">
-              <Input defaultValue={e.setor} />
+              <Input placeholder="Ex.: Fintech" />
             </Field>
           </div>
         </div>
         <div className="row gap-3 mb-2 flex-wrap">
           <div style={{ flex: 1, minWidth: 240 }}>
             <Field label="Cidade">
-              <Input defaultValue={e.cidade} />
+              <Input placeholder="Cidade, UF" />
             </Field>
           </div>
           <div style={{ flex: 1, minWidth: 240 }}>
             <Field label="Tamanho">
-              <Input defaultValue={e.tamanho} />
+              <Input placeholder="Nº de funcionários" />
             </Field>
           </div>
         </div>
         <Field label="Sobre">
-          <Textarea
-            rows={3}
-            defaultValue="Banco digital com foco em open finance e PIX. Equipe de segurança interna pequena, contratamos pentests trimestrais."
-          />
+          <Textarea rows={3} placeholder="Descreva o negócio e o foco de segurança." />
         </Field>
         <div className="row mt-4" style={{ justifyContent: "flex-end" }}>
           <button
@@ -218,17 +204,17 @@ function EmpresaPerfil() {
   );
 }
 
-function AdminPerfil() {
+function AdminPerfil({ user }: { user: User }) {
   return (
     <div className="container-x" style={{ padding: "32px 0 64px", maxWidth: 800 }}>
       <h1 className="h1 mb-4">Perfil</h1>
       <div className="card card-pad-lg">
         <div className="row gap-3">
-          <Avatar name={adminUser.nome} color={adminUser.color} size="lg" />
+          <Avatar name={user.full_name} size="lg" />
           <div className="col">
-            <strong style={{ fontWeight: 500 }}>{adminUser.nome}</strong>
+            <strong style={{ fontWeight: 500 }}>{user.full_name}</strong>
             <span className="muted" style={{ fontSize: 13 }}>
-              admin@aegishub.com.br
+              {user.email} · Operações
             </span>
           </div>
         </div>

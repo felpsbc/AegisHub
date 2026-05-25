@@ -1,7 +1,7 @@
 import { type HTMLAttributes } from "react";
 
 import { cn } from "@/lib/cn";
-import type { Palette } from "@/lib/mock";
+import type { Palette } from "@/lib/format";
 
 type Props = HTMLAttributes<HTMLSpanElement> & {
   tone?: Palette;

@@ -36,10 +36,11 @@ apps/api/                       # Django + DRF + uv
 
 apps/web/                       # Next.js 15 + pnpm
   app/(public)/                 # landing
-  app/(auth)/                   # login, cadastro  (login/mfa e recuperar-senha pendentes)
-  app/(app)/                    # admin/, app/{dashboard,pentesters,propostas,perfil}
+  app/(auth)/                   # login (+ mfa), cadastro, confirmar-email/[uidb64]/[token]
+  app/(app)/                    # admin/, app/{dashboard,pentesters,propostas,perfil,favoritos,minhas-propostas}
+  app/api/proxy/[...path]/      # BFF: /api/proxy/* -> api:8000/api/v1/* (já implementado)
   components/                   # Button, Card, Field, Topbar, AppGuard...
-  lib/                          # cn.ts, env.ts, store.ts, mock.ts (mock alimenta tudo hoje)
+  lib/                          # cn.ts, env.ts, store.ts, api.ts (client da API real; mock.ts foi removido)
 
 packages/
   api-types/                    # tipos TS gerados do OpenAPI
@@ -89,10 +90,10 @@ Onde olhar:
 | http://localhost:8025 | MailHog — captura todo e-mail enviado em dev |
 | http://localhost:9001 | MinIO console (`minioadmin/minioadmin`) |
 
-Logins demo (após `seed_demo`):
+Primeiro acesso (não há mais usuários de demo — `seed_demo` só carrega catálogos):
 
-- `ana@acme.com.br` / `ana-demo-pass-2026` — empresa
-- `carlos@solo.com` / `carlos-demo-pass-2026` — pentester
+- Crie um admin: `ADMIN_EMAIL=... ADMIN_PASSWORD=... docker compose exec api uv run python manage.py create_admin` (já nasce com e-mail confirmado).
+- Ou registre empresa/pentester em `/cadastro` e **confirme o e-mail** clicando no link que aparece no MailHog (http://localhost:8025) — sem isso o login retorna `email_not_confirmed`.
 
 ---
 
@@ -102,10 +103,11 @@ Logins demo (após `seed_demo`):
 
 1. Frontend faz `GET /api/v1/auth/csrf` → recebe cookie `pentesthub_csrf`.
 2. `POST /api/v1/auth/login` com email+senha + header `X-CSRFToken`.
-3. Se MFA habilitado: API retorna `202 {"mfa_required": true}` e guarda `pending_mfa_user` + `pending_mfa_at` na sessão.
-4. Frontend pede TOTP (ou backup code), faz `POST /api/v1/auth/login/mfa`.
-5. API valida com `pyotp.TOTP(...)` ou, se falhar, itera os hashes em `user.mfa_backup_codes` via `check_password` (constant-time). Se for backup, **remove** o hash da lista (one-time).
-6. `pending_mfa` expira em **300 segundos** — passou disso, recomeça do passo 2.
+3. Se o e-mail não foi confirmado: API retorna `401 {"detail": "email_not_confirmed"}`. Cadastro **não** faz auto-login — o usuário precisa clicar no link de confirmação (`/confirmar-email/...`, capturado pelo MailHog em dev) que dispara `POST /api/v1/auth/email/confirm/<uidb64>/<token>`. Admins via `create_admin` já nascem confirmados.
+4. Se MFA habilitado: API retorna `202 {"mfa_required": true}` e guarda `pending_mfa_user` + `pending_mfa_at` na sessão.
+5. Frontend pede TOTP (ou backup code), faz `POST /api/v1/auth/login/mfa`.
+6. API valida com `pyotp.TOTP(...)` ou, se falhar, itera os hashes em `user.mfa_backup_codes` via `check_password` (constant-time). Se for backup, **remove** o hash da lista (one-time).
+7. `pending_mfa` expira em **300 segundos** — passou disso, recomeça do passo 2.
 
 Toda essa lógica vive em `apps/api/accounts/services.py`. Se for adicionar fator novo (e-mail OTP, WebAuthn), **escreva no service**, não na view.
 
@@ -169,7 +171,7 @@ E são aplicados assim:
 
 2. **"Vou usar `Model.objects.all()` direto na view"** — não. (a) Quebra a regra "view não toca ORM"; (b) bypassa o filtro tenant-aware. Use service.
 
-3. **"O frontend já usa o backend"** — **não usa.** `apps/web/lib/mock.ts` ainda alimenta tudo. O BFF `app/api/proxy/*` está no plano mas não foi escrito. Quem for fazer essa integração precisa: criar route handlers em `app/api/proxy/[...path]/route.ts`, mover cookie de sessão para o domínio do Next, configurar CSP `connect-src 'self'`, **arrancar o mock**.
+3. **"O frontend ainda usa mock"** — **não usa mais.** O BFF `app/api/proxy/[...path]/route.ts` já existe e reescreve `/api/proxy/*` → `api:8000/api/v1/*`, repassando cookies de sessão; `apps/web/lib/api.ts` (TanStack Query) é o único client e `lib/mock.ts` foi removido. O que ainda falta: CSP `connect-src 'self'` e HSTS no `next.config.ts`.
 
 4. **"As rotas de catálogo ainda são públicas no frontend"** — não são mais. `/app/pentesters` e `/app/propostas` vivem em `app/(app)/app/...` atrás do `AppGuard`; `app/(public)/` só tem a landing. Cuidado se você for criar nova página: se for de marketplace, ela mora em `(app)/`, não em `(public)/`.
 
@@ -262,7 +264,7 @@ Em ordem:
 - **Application** — candidatura de pentester a uma proposal. Estados: PENDING → SHORTLISTED → ACCEPTED/REJECTED/WITHDRAWN.
 - **Contract** — gerado quando uma application vira ACCEPTED. (Ainda não implementado em código.)
 - **Audit log** — tabela append-only com hash chain. Toda mutação relevante grava evento.
-- **BFF** — *backend for frontend*. Rotas `/api/proxy/*` no Next que falam com Django. Browser nunca fala direto com a API. (Ainda não implementado.)
+- **BFF** — *backend for frontend*. Rotas `/api/proxy/*` no Next (`app/api/proxy/[...path]/route.ts`) que falam com Django. Browser nunca fala direto com a API. (Já implementado.)
 - **DEK / KEK** — Data Encryption Key (cifra payload) / Key Encryption Key (cifra a DEK, fica no KMS).
 - **PSP** — *payment service provider* (Pagar.me, Asaas).
 

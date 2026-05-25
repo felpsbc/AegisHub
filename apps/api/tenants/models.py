@@ -46,6 +46,31 @@ class Tenant(models.Model):
         return f"{self.legal_name} ({self.type})"
 
 
+class CompanyProfile(models.Model):
+    """Perfil público da empresa — preenchido pela própria empresa, lido por pentesters.
+
+    OneToOne com `Tenant` (type=COMPANY), espelhando o padrão de `PentesterProfile`.
+    Conteúdo editável estilo LinkedIn: resumo curto, história/sobre, setor, etc.
+    """
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    tenant = models.OneToOneField(
+        Tenant, on_delete=models.CASCADE, related_name="company_profile"
+    )
+    summary = models.CharField(max_length=200, blank=True, default="")
+    about = models.TextField(blank=True, default="")
+    website = models.URLField(max_length=200, blank=True, default="")
+    industry = models.CharField(max_length=120, blank=True, default="")
+    location = models.CharField(max_length=120, blank=True, default="")
+    size = models.CharField(max_length=40, blank=True, default="")
+    founded_year = models.PositiveIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"{self.tenant.legal_name} — perfil"
+
+
 class MembershipRole(models.TextChoices):
     OWNER = "OWNER", "Owner"
     MEMBER = "MEMBER", "Member"

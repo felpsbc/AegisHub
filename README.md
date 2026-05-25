@@ -38,12 +38,10 @@ Endpoints:
 | http://localhost:8025       | MailHog (e-mails capturados)           |
 | http://localhost:9001       | MinIO console (`minioadmin/minioadmin`) |
 
-Logins de demo (após `seed_demo`):
+Primeiro acesso (não há mais usuários de demo — `seed_demo` só carrega os catálogos):
 
-- `ana@acme.com.br` / `ana-demo-pass-2026` (empresa)
-- `bia@bancodigital.com.br` / `bia-demo-pass-2026` (empresa)
-- `carlos@solo.com` / `carlos-demo-pass-2026` (pentester)
-- `daniel@solo.com`, `eva@solo.com`, `fred@solo.com` (pentesters)
+- **Admin:** `ADMIN_EMAIL=... ADMIN_PASSWORD=... docker compose exec api uv run python manage.py create_admin` (já nasce com e-mail confirmado).
+- **Empresa/pentester:** registre em `/cadastro` e **confirme o e-mail** pelo link no MailHog (http://localhost:8025). Sem confirmar, o login retorna `email_not_confirmed`.
 
 ---
 
@@ -118,11 +116,11 @@ apps/
     manage.py
   web/                       # Next.js 15 (pnpm)
     app/(public)/            # landing
-    app/(auth)/              # login, cadastro  (login/mfa e recuperar-senha pendentes)
-    app/(app)/               # admin/, app/{dashboard,pentesters,propostas,perfil}
-    # app/api/proxy/[...path] # BFF planejado — ainda não escrito
+    app/(auth)/              # login (+ mfa), cadastro, confirmar-email/[uidb64]/[token]
+    app/(app)/               # admin/, app/{dashboard,pentesters,propostas,perfil,favoritos,minhas-propostas}
+    app/api/proxy/[...path]  # BFF: reescreve /api/proxy/* -> api:8000/api/v1/* (já implementado)
     components/              # Button, Card, Pill, Avatar, Field, Topbar, AppGuard, ...
-    lib/                     # cn.ts, env.ts, store.ts, mock.ts (mock alimenta tudo hoje)
+    lib/                     # cn.ts, env.ts, store.ts, api.ts (client TanStack Query da API real)
     styles/                  # tokens.css (§7.5), globals.css
 
 packages/
@@ -173,15 +171,17 @@ curl -s -b /tmp/c2 -c /tmp/c2 -X POST http://localhost:8000/api/v1/auth/login \
 curl -s -b /tmp/c2 http://localhost:8000/api/v1/proposals | jq '.[0].title'
 ```
 
-Fluxo manual no navegador (após o BFF/integração real existir — hoje o frontend usa mock):
+> ⚠️ Os logins de demo (`ana@acme...`, `carlos@solo...`) **não existem mais** — `seed_demo` só carrega os catálogos (specialties/certifications). Para o smoke test acima, registre uma empresa e um pentester via `/cadastro` (ou `POST /auth/register`) e **confirme o e-mail** (pegue o link no MailHog em http://localhost:8025) antes de logar — o login rejeita e-mail não confirmado com `email_not_confirmed`.
+
+Fluxo manual no navegador (o frontend já consome a API real via BFF):
 
 1. Abra `http://localhost:3000` → landing pública.
-2. `/login` como `ana@acme.com.br` (empresa) → cai em `/app`.
-3. `/app/pentesters` → ver catálogo (só visível pra empresa).
-4. **Nova proposta** → preencha → publique.
-5. Logout. Logue como `carlos@solo.com` (pentester).
-6. `/app/propostas` → ver feed (só pentester vê). Abra a proposta → **Candidatar-se**.
-7. Logout. Logue como `ana@acme.com.br` → veja a candidatura → **Shortlist** / **Aceitar** / **Rejeitar**.
+2. `/cadastro` como empresa → tela "Confirme seu e-mail" → abra o link no MailHog (http://localhost:8025).
+3. `/login` com a empresa → cai em `/app/pentesters` (catálogo só visível pra empresa).
+4. `/app/perfil` → preencha o **perfil público da empresa** (resumo, história, setor…).
+5. **Nova proposta** → preencha (clique nas especialidades) → publique.
+6. Cadastre/confirme um pentester e logue. `/app/propostas` → feed (só pentester vê). Abra a proposta → veja **Sobre a empresa** → **Candidatar-se**.
+7. Volte para a empresa → veja a candidatura → **Shortlist** / **Aceitar** / **Rejeitar**.
 
 > ⚠️ Anônimo nunca vê dados do marketplace. As rotas de catálogo já vivem em `app/(app)/app/{pentesters,propostas}` atrás do `AppGuard`; `(public)/` guarda apenas a landing.
 

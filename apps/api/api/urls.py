@@ -12,9 +12,14 @@ urlpatterns = [
     path("auth/me", views.MeView.as_view()),
     path("auth/mfa/setup", views.MFASetupView.as_view()),
     path("auth/mfa/enable", views.MFAEnableView.as_view()),
+    path("auth/email/confirm/<str:uidb64>/<str:token>", views.EmailConfirmView.as_view()),
+    path("auth/email/resend", views.EmailResendView.as_view()),
 
     # taxonomies
     path("specialties", views.SpecialtyListView.as_view()),
+
+    # company profile (empresa autenticada)
+    path("company/profile", views.CompanyProfileView.as_view()),
 
     # pentesters
     path("pentesters", views.PentesterListView.as_view()),
@@ -34,4 +39,8 @@ urlpatterns = [
     # applications
     path("applications/mine", views.ApplicationListMineView.as_view()),
     path("applications/<uuid:public_id>/<str:action>", views.ApplicationActionView.as_view()),
+
+    # favorites
+    path("favorites", views.FavoriteListCreateView.as_view()),
+    path("favorites/<uuid:public_id>", views.FavoriteDeleteView.as_view()),
 ]

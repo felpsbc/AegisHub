@@ -219,6 +219,7 @@
   }
   .dot-open { background: var(--status-open); }
   .dot-busy { background: var(--status-busy); }
+  .dot-offline { background: var(--text-3); }
 
   /* Avatar */
   .avatar {

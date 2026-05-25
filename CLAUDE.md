@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Estado do repositório
 
-Fase 0 + Fase 1 entregues: cadastro, login com sessão httpOnly + CSRF, MFA TOTP (com backup codes persistidos), painel autenticado para empresa e pentester, criação/publicação/candidatura de propostas. O `apps/api` (Django + DRF + uv) e o `apps/web` (Next.js 15 + pnpm) já existem e rodam via `docker compose up`. O frontend ainda usa **mock data** (`apps/web/lib/mock.ts`); o BFF `app/api/proxy/*` está previsto mas **ainda não foi escrito**, portanto fechar autorização no backend hoje só tem efeito ao falar direto com a API ou via Swagger. Veja o `README.md` para comandos do dia a dia e `docs/ONBOARDING.md` para o passo-a-passo do dev novo.
+Fase 0 + Fase 1 + entrega 1.0: cadastro, login com sessão httpOnly + CSRF, **confirmação de e-mail obrigatória antes do acesso**, MFA TOTP (com backup codes persistidos), painel autenticado para empresa e pentester, criação/publicação/candidatura de propostas, favoritos (`apps/api/favorites/`) e **edição do perfil público da empresa** (`CompanyProfile`). O `apps/api` (Django + DRF + uv) e o `apps/web` (Next.js 15 + pnpm) rodam via `docker compose up`. **O BFF `app/api/proxy/[...path]` já existe e o frontend consome a API real** — o antigo `apps/web/lib/mock.ts` foi removido. Toda chamada passa por `apps/web/lib/api.ts` → `/api/proxy/*` → `api:8000/api/v1/*`, então os gates de autorização do backend já valem para o browser. Veja o `README.md` para comandos do dia a dia e `docs/ONBOARDING.md` para o passo-a-passo do dev novo.
 
 ## Fonte canônica
 
@@ -53,6 +53,7 @@ O doc original prevê **React + Vite** (ADR-007). Decisão posterior trocou o fr
 - **Sessão Django, não JWT em localStorage.** Cookie `httpOnly`+`Secure`+`SameSite=Lax`. JWT só para integrações server-to-server.
 - **MFA TOTP obrigatório para admins e empresas**; recomendado para pentesters. Backup codes são gerados na ativação, exibidos UMA vez em claro e persistidos como hash (`make_password`); `verify_mfa` consome o hash one-time e remove da lista.
 - **`pending_mfa_user` da sessão tem TTL de 300s** (`PENDING_MFA_TTL_SECONDS` em `accounts/services.py`). Expirado → `LoginError("pending_mfa_expired")` e o usuário recomeça do `/auth/login`.
+- **Confirmação de e-mail obrigatória para login.** `login_with_password` rejeita com `LoginError("email_not_confirmed")` enquanto `user.email_confirmed_at is None` (gate antes do MFA). O token é gerado pelo `EmailConfirmationTokenGenerator` (`accounts/email.py`), que mistura `email_confirmed_at` no hash — invalida sozinho assim que o e-mail é confirmado. O link aponta para a rota Next `/confirmar-email/<uidb64>/<token>` (o grupo `(auth)` **não** entra na URL — não use `/auth/...`), que dispara `POST /auth/email/confirm/<uidb64>/<token>`. No cadastro **não há auto-login**: o frontend mostra a tela "Confirme seu e-mail" com reenvio. Admins criados via `create_admin`/`createsuperuser` já entram com `email_confirmed_at` setado. Em dev todo e-mail é capturado pelo **MailHog** (inbox em http://localhost:8025), nunca chega a caixa real.
 - **Migrations destrutivas seguem expand/contract em duas releases.** `--check` antes do switch de tráfego.
 - **Catálogos do marketplace exigem auth + role.** ~~Bypass público~~ derrubado em sessão de hardening:
   - `GET /pentesters` e `GET /pentesters/{id}` exigem Membership `tenant.type=COMPANY` (ou ser dono do tenant para o detail).
@@ -65,10 +66,10 @@ O doc original prevê **React + Vite** (ADR-007). Decisão posterior trocou o fr
 ```
 pentesthub/
 ├── apps/api/         # Django (Fase 1): pentesthub/, accounts/, tenants/, pentesters/,
-│                     # proposals/, applications/, audit/, api/, infra/{gateways,kms,storage}
+│                     # proposals/, applications/, favorites/, audit/, api/, infra/{gateways,kms,storage}
 │                     # Fase 2+: contracts/, payments/, messaging/, reports/, admin_ops/, notifications/
-├── apps/web/         # Next.js App Router: app/{(public),(auth),(app)}/, components/, lib/, styles/
-│                     # Pendente: app/api/proxy/[...path] (BFF), features/, hooks/
+├── apps/web/         # Next.js App Router: app/{(public),(auth),(app)}/, app/api/proxy/[...path] (BFF),
+│                     # components/, lib/ (api.ts = client da API), styles/. Pendente: features/, hooks/
 ├── packages/api-types/    # gerado via openapi-typescript (já existe; gerar após `manage.py spectacular`)
 ├── packages/schemas/      # Zod schemas compartilhados
 ├── infra/docker/          # api.Dockerfile, web.Dockerfile (Fase 2: terraform/, compose extra)
@@ -81,10 +82,10 @@ Comandos disponíveis: `Taskfile.yml` (preferir `task <alvo>` se você tem `task
 
 Mantenha esta lista atualizada — itens aqui são candidatos naturais a próximos PRs:
 
-- **2FA por e-mail** ainda não foi implementado (decisão tomada em sessão; prioridade alta).
+- **Confirmação de e-mail** já é exigida no login (ver invariante). Falta o **2FA por e-mail** como segundo fator (código por e-mail no login), distinto da confirmação — ainda não implementado.
+- **Envio de e-mail síncrono dentro do registro.** `register_account` chama `send_confirmation_email` na transação (falha logada, não aborta). Mover para task Celery na Fase 2.
 - **DRF Permission classes** (`IsCompany`, `IsPentester`) não existem; gates são funções inline em `views.py`.
 - **`mfa_secret` está em claro no DB** — falta envelope encryption com KEK do KMS, mesmo padrão de `Message`/`Report`.
-- **BFF `app/api/proxy/*` não existe**; frontend usa mock. Sem BFF, browser não consome a API real.
 - **Sem CSP/HSTS no Next**; `next.config.ts` traz só os headers básicos.
 - **Sem rate-limit dedicado em `/auth/login`**; o lockout do `django-axes` (5/h) cobre brute-force, mas falta throttle por IP no DRF.
 - **`SECRET_KEY` cai num default em dev**; em produção tem que vir do ambiente — proteger com `required=True` quando `DEBUG=False`.

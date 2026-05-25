@@ -1,63 +1,49 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Plus, Search } from "lucide-react";
 
 import { CheckboxRow } from "@/components/CheckboxRow";
 import { PropostaCard } from "@/components/PropostaCard";
-import { accountFromUser, useSession } from "@/lib/api";
-import { propostas, type Proposta, type TipoTeste } from "@/lib/mock";
+import { RadioRow } from "@/components/RadioRow";
+import {
+  accountFromUser,
+  useProposals,
+  useSession,
+  useSpecialties,
+} from "@/lib/api";
 
-const allTags = [
-  "Web app",
-  "API",
-  "Mobile",
-  "Cloud",
-  "Red team",
-  "Eng. social",
-  "IoT",
-  "Hardware",
-  "Active Directory",
-];
-
-type RemotoSel = "all" | "remoto" | "presencial";
+type ModalidadeSel = "all" | "remoto" | "presencial";
 
 export default function PropostasCatalogPage() {
+  const router = useRouter();
   const { data: user } = useSession();
   const account = accountFromUser(user);
-  const [tagsSel, setTags] = useState<Set<string>>(new Set());
-  const [budgetMin, setBudgetMin] = useState(10000);
-  const [tipoSel, setTipoSel] = useState<Set<TipoTeste>>(new Set());
-  const [remotoSel, setRemoto] = useState<RemotoSel>("all");
+
   const [query, setQuery] = useState("");
+  const [specialtySel, setSpecialtySel] = useState<string>("");
+  const [modalidade, setModalidade] = useState<ModalidadeSel>("all");
+  const [budgetMin, setBudgetMin] = useState(0);
 
-  const toggleStr = (set: Set<string>, setter: (s: Set<string>) => void) => (val: string) => {
-    const n = new Set(set);
-    if (n.has(val)) n.delete(val);
-    else n.add(val);
-    setter(n);
-  };
-  const toggleTipo = (val: TipoTeste) => {
-    const n = new Set(tipoSel);
-    if (n.has(val)) n.delete(val);
-    else n.add(val);
-    setTipoSel(n);
-  };
+  // Empresa vê suas próprias propostas (?mine=1); pentester vê o feed PUBLISHED.
+  const list = useProposals({
+    q: query || undefined,
+    specialty: specialtySel || undefined,
+    mine: account === "empresa",
+  });
+  const specialties = useSpecialties();
 
-  const list = useMemo<Proposta[]>(
-    () =>
-      propostas.filter((pr) => {
-        const q = query.toLowerCase();
-        if (q && !pr.titulo.toLowerCase().includes(q)) return false;
-        if (tagsSel.size && !pr.categorias.some((c) => tagsSel.has(c.label))) return false;
-        if (pr.budget < budgetMin) return false;
-        if (tipoSel.size && !tipoSel.has(pr.tipoTeste)) return false;
-        if (remotoSel === "remoto" && !pr.remoto) return false;
-        if (remotoSel === "presencial" && pr.remoto) return false;
-        return true;
-      }),
-    [query, tagsSel, budgetMin, tipoSel, remotoSel],
-  );
+  const items = useMemo(() => {
+    const all = list.data ?? [];
+    return all.filter((pr) => {
+      const amount = pr.budget_amount ? Number(pr.budget_amount) : 0;
+      if (budgetMin > 0 && amount < budgetMin) return false;
+      // modalidade ainda não vem do backend; quando vier, filtrar aqui também.
+      void modalidade;
+      return true;
+    });
+  }, [list.data, budgetMin, modalidade]);
 
   return (
     <div className="container-x catalog">
@@ -88,17 +74,26 @@ export default function PropostasCatalogPage() {
 
         <div className="sidebar-section">
           <h3>Modalidade</h3>
-          <CheckboxRow
-            label="Remoto"
-            checked={remotoSel === "remoto"}
-            onChange={() => setRemoto(remotoSel === "remoto" ? "all" : "remoto")}
+          <RadioRow
+            name="modalidade"
+            value="all"
+            label="Todas"
+            checked={modalidade === "all"}
+            onChange={(v) => setModalidade(v as ModalidadeSel)}
           />
-          <CheckboxRow
+          <RadioRow
+            name="modalidade"
+            value="remoto"
+            label="Remoto"
+            checked={modalidade === "remoto"}
+            onChange={(v) => setModalidade(v as ModalidadeSel)}
+          />
+          <RadioRow
+            name="modalidade"
+            value="presencial"
             label="Presencial"
-            checked={remotoSel === "presencial"}
-            onChange={() =>
-              setRemoto(remotoSel === "presencial" ? "all" : "presencial")
-            }
+            checked={modalidade === "presencial"}
+            onChange={(v) => setModalidade(v as ModalidadeSel)}
           />
         </div>
 
@@ -107,8 +102,8 @@ export default function PropostasCatalogPage() {
           <input
             className="range"
             type="range"
-            min={10000}
-            max={60000}
+            min={0}
+            max={100000}
             step={2000}
             value={budgetMin}
             onChange={(e) => setBudgetMin(Number(e.target.value))}
@@ -122,31 +117,24 @@ export default function PropostasCatalogPage() {
               marginTop: 6,
             }}
           >
-            <span>R$ 10k</span>
-            <span>R$ 60k</span>
+            <span>R$ 0</span>
+            <span>R$ 100k</span>
           </div>
         </div>
 
         <div className="sidebar-section">
-          <h3>Tipo de teste</h3>
-          {(["Black-box", "Gray-box", "White-box"] as TipoTeste[]).map((t) => (
+          <h3>Especialidade</h3>
+          <CheckboxRow
+            label="Todas"
+            checked={specialtySel === ""}
+            onChange={() => setSpecialtySel("")}
+          />
+          {(specialties.data ?? []).slice(0, 12).map((s) => (
             <CheckboxRow
-              key={t}
-              label={t}
-              checked={tipoSel.has(t)}
-              onChange={() => toggleTipo(t)}
-            />
-          ))}
-        </div>
-
-        <div className="sidebar-section">
-          <h3>Categoria</h3>
-          {allTags.map((t) => (
-            <CheckboxRow
-              key={t}
-              label={t}
-              checked={tagsSel.has(t)}
-              onChange={() => toggleStr(tagsSel, setTags)(t)}
+              key={s.code}
+              label={s.label}
+              checked={specialtySel === s.code}
+              onChange={() => setSpecialtySel(specialtySel === s.code ? "" : s.code)}
             />
           ))}
         </div>
@@ -155,28 +143,45 @@ export default function PropostasCatalogPage() {
       <div className="catalog-main">
         <div className="row mb-4" style={{ justifyContent: "space-between" }}>
           <div>
-            <h1 className="h1">Propostas abertas</h1>
+            <h1 className="h1">
+              {account === "empresa" ? "Minhas propostas" : "Propostas abertas"}
+            </h1>
             <span className="muted" style={{ fontSize: 13 }}>
-              {list.length} propostas
+              {list.isLoading ? "carregando…" : `${items.length} propostas`}
             </span>
           </div>
           {account === "empresa" && (
-            <button className="btn btn-primary btn-sm" type="button">
+            <button
+              className="btn btn-primary btn-sm"
+              type="button"
+              onClick={() => router.push("/app/propostas/nova")}
+            >
               <Plus size={13} /> Publicar proposta
             </button>
           )}
         </div>
 
-        {list.length === 0 ? (
+        {list.isError && (
+          <div
+            className="card"
+            style={{ textAlign: "center", padding: 32, color: "var(--danger)" }}
+          >
+            Falha ao carregar propostas. Recarregue.
+          </div>
+        )}
+
+        {!list.isError && items.length === 0 && !list.isLoading && (
           <div
             className="card"
             style={{ textAlign: "center", padding: 48, color: "var(--text-2)" }}
           >
             Nenhuma proposta com esses filtros.
           </div>
-        ) : (
+        )}
+
+        {items.length > 0 && (
           <div className="list-propostas">
-            {list.map((pr) => (
+            {items.map((pr) => (
               <PropostaCard key={pr.id} pr={pr} />
             ))}
           </div>

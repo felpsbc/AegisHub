@@ -12,10 +12,12 @@ from rest_framework.views import APIView
 from accounts.services import (
     LoginError,
     MFARequired,
+    confirm_email,
     enable_mfa,
     login_with_password,
     logout_session,
     register_account,
+    resend_confirmation,
     setup_mfa,
     verify_mfa,
 )
@@ -23,11 +25,16 @@ from api.serializers import (
     ApplicationCreateSerializer,
     ApplicationSerializer,
     AvailabilityUpdateSerializer,
+    CompanyProfileSerializer,
+    CompanyProfileUpdateSerializer,
+    FavoriteCreateSerializer,
+    FavoriteSerializer,
     LoginSerializer,
     MFASerializer,
     PentesterPublicSerializer,
     PentesterUpdateSerializer,
     ProposalCreateSerializer,
+    ProposalDetailSerializer,
     ProposalSerializer,
     RegisterSerializer,
     SpecialtySerializer,
@@ -35,6 +42,13 @@ from api.serializers import (
 )
 from applications.models import Application, ApplicationStatus
 from applications.services import ApplicationError, apply_to_proposal, transition
+from favorites.models import FavoriteTarget
+from favorites.services import (
+    FavoriteError,
+    add_favorite,
+    list_favorites,
+    remove_favorite,
+)
 from pentesters.models import Availability, PentesterProfile, Specialty
 from pentesters.services import set_availability
 from proposals.models import Proposal, ProposalStatus
@@ -44,7 +58,8 @@ from proposals.services import (
     create_proposal,
     publish_proposal,
 )
-from tenants.models import Membership, TenantType
+from tenants.models import CompanyProfile, Membership, Tenant, TenantType
+from tenants.services import update_company_profile
 
 
 def _has_company_membership(user) -> bool:
@@ -149,6 +164,29 @@ class MFAEnableView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class EmailConfirmView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(responses={200: dict, 400: dict})
+    def post(self, request, uidb64, token):
+        try:
+            confirm_email(uidb64=uidb64, token=token)
+        except LoginError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"detail": "email_confirmed"})
+
+
+class EmailResendView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(responses={202: None})
+    def post(self, request):
+        email = (request.data or {}).get("email")
+        if email:
+            resend_confirmation(email=email)
+        return Response(status=status.HTTP_202_ACCEPTED)
+
+
 # ============ TAXONOMIES ============
 
 class SpecialtyListView(APIView):
@@ -227,6 +265,40 @@ class PentesterAvailabilityView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+# ============ COMPANY PROFILE ============
+
+class CompanyProfileView(APIView):
+    """Perfil da empresa autenticada. GET lê, PATCH edita (só membros do tenant)."""
+
+    def _company_tenant(self, user) -> Tenant | None:
+        m = (
+            Membership.objects.select_related("tenant__company_profile")
+            .filter(user=user, tenant__type=TenantType.COMPANY)
+            .first()
+        )
+        return m.tenant if m else None
+
+    @extend_schema(responses=CompanyProfileSerializer)
+    def get(self, request):
+        tenant = self._company_tenant(request.user)
+        if tenant is None:
+            return Response({"detail": "only_companies"}, status=status.HTTP_403_FORBIDDEN)
+        profile, _ = CompanyProfile.objects.get_or_create(tenant=tenant)
+        return Response(CompanyProfileSerializer(profile).data)
+
+    @extend_schema(request=CompanyProfileUpdateSerializer, responses=CompanyProfileSerializer)
+    def patch(self, request):
+        tenant = self._company_tenant(request.user)
+        if tenant is None:
+            return Response({"detail": "only_companies"}, status=status.HTTP_403_FORBIDDEN)
+        ser = CompanyProfileUpdateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        profile = update_company_profile(
+            tenant=tenant, actor=request.user, **ser.validated_data
+        )
+        return Response(CompanyProfileSerializer(profile).data)
+
+
 # ============ PROPOSALS ============
 
 class ProposalListView(APIView):
@@ -294,7 +366,9 @@ class ProposalDetailView(APIView):
     @extend_schema(responses=ProposalSerializer)
     def get(self, request, public_id):
         p = get_object_or_404(
-            Proposal.objects.select_related("tenant").prefetch_related("specialties"),
+            Proposal.objects.select_related("tenant__company_profile").prefetch_related(
+                "specialties"
+            ),
             public_id=public_id,
         )
         is_owner = _is_member_of(request.user, p.tenant)
@@ -306,7 +380,7 @@ class ProposalDetailView(APIView):
             # Drafts/closed/archived — só dono.
             if not is_owner:
                 return Response({"detail": "not_found"}, status=404)
-        return Response(ProposalSerializer(p).data)
+        return Response(ProposalDetailSerializer(p).data)
 
 
 class ProposalPublishView(APIView):
@@ -418,6 +492,51 @@ class ApplicationActionView(APIView):
         except ApplicationError as e:
             return Response({"detail": str(e)}, status=status.HTTP_409_CONFLICT)
         return Response(ApplicationSerializer(app).data)
+
+
+# ============ FAVORITES ============
+
+
+class FavoriteListCreateView(APIView):
+    @extend_schema(responses=FavoriteSerializer(many=True))
+    def get(self, request):
+        target_type = request.query_params.get("type")
+        try:
+            qs = list_favorites(user=request.user, target_type=target_type)
+        except FavoriteError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(FavoriteSerializer(qs, many=True).data)
+
+    @extend_schema(request=FavoriteCreateSerializer, responses=FavoriteSerializer)
+    def post(self, request):
+        ser = FavoriteCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        target_type = ser.validated_data["target_type"]
+        target_uuid = ser.validated_data["target_id"]
+
+        # Valida que o alvo existe — evita guardar bookmarks órfãos.
+        if target_type == FavoriteTarget.PENTESTER:
+            if not PentesterProfile.objects.filter(public_id=target_uuid).exists():
+                return Response({"detail": "target_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        elif target_type == FavoriteTarget.PROPOSAL:
+            if not Proposal.objects.filter(public_id=target_uuid).exists():
+                return Response({"detail": "target_not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            fav = add_favorite(user=request.user, target_type=target_type, target_uuid=target_uuid)
+        except FavoriteError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(FavoriteSerializer(fav).data, status=status.HTTP_201_CREATED)
+
+
+class FavoriteDeleteView(APIView):
+    @extend_schema(responses={204: None})
+    def delete(self, request, public_id):
+        try:
+            remove_favorite(user=request.user, public_id=public_id)
+        except FavoriteError:
+            return Response({"detail": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ============ CSRF ping ============

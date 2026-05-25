@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from accounts.models import User
 from applications.models import Application
+from favorites.models import Favorite, FavoriteTarget
 from pentesters.models import (
     Availability,
     Certification,
@@ -13,6 +14,7 @@ from pentesters.models import (
 )
 from proposals.models import BudgetKind, Proposal, ProposalStatus, ProposalVisibility
 from tenants.models import (
+    CompanyProfile,
     DocumentKind,
     Membership,
     Tenant,
@@ -21,22 +23,61 @@ from tenants.models import (
 )
 
 
+# --- Company profile ---
+
+class CompanyProfileSerializer(serializers.ModelSerializer):
+    """Projeção pública do perfil da empresa (lida por pentesters)."""
+
+    class Meta:
+        model = CompanyProfile
+        fields = [
+            "summary", "about", "website", "industry",
+            "location", "size", "founded_year",
+        ]
+
+
+class CompanyProfileUpdateSerializer(serializers.Serializer):
+    summary = serializers.CharField(max_length=200, allow_blank=True, required=False)
+    about = serializers.CharField(max_length=8000, allow_blank=True, required=False)
+    website = serializers.URLField(max_length=200, allow_blank=True, required=False)
+    industry = serializers.CharField(max_length=120, allow_blank=True, required=False)
+    location = serializers.CharField(max_length=120, allow_blank=True, required=False)
+    size = serializers.CharField(max_length=40, allow_blank=True, required=False)
+    founded_year = serializers.IntegerField(
+        required=False, allow_null=True, min_value=1800, max_value=2100
+    )
+
+
 # --- Auth / User ---
 
 class TenantSummarySerializer(serializers.ModelSerializer):
     id = serializers.UUIDField(source="public_id", read_only=True)
+    company_profile = serializers.SerializerMethodField()
 
     class Meta:
         model = Tenant
-        fields = ["id", "type", "legal_name", "status"]
+        fields = ["id", "type", "legal_name", "status", "company_profile"]
+
+    def get_company_profile(self, obj):
+        if obj.type != TenantType.COMPANY:
+            return None
+        prof = getattr(obj, "company_profile", None)
+        return CompanyProfileSerializer(prof).data if prof else None
 
 
 class MembershipSerializer(serializers.ModelSerializer):
     tenant = TenantSummarySerializer(read_only=True)
+    pentester_profile_id = serializers.SerializerMethodField()
 
     class Meta:
         model = Membership
-        fields = ["tenant", "role"]
+        fields = ["tenant", "role", "pentester_profile_id"]
+
+    def get_pentester_profile_id(self, obj):
+        if obj.tenant.type != TenantType.INDIVIDUAL:
+            return None
+        prof = getattr(obj.tenant, "pentester_profile", None)
+        return str(prof.public_id) if prof else None
 
 
 class UserMeSerializer(serializers.ModelSerializer):
@@ -45,7 +86,15 @@ class UserMeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["id", "email", "full_name", "is_admin", "mfa_enabled", "memberships"]
+        fields = [
+            "id",
+            "email",
+            "full_name",
+            "is_admin",
+            "mfa_enabled",
+            "email_confirmed_at",
+            "memberships",
+        ]
 
 
 # --- Auth in/out ---
@@ -150,6 +199,19 @@ class ProposalSerializer(serializers.ModelSerializer):
         ]
 
 
+class ProposalDetailSerializer(ProposalSerializer):
+    """Igual ao ProposalSerializer + perfil da empresa, para a tela de detalhe."""
+
+    company_profile = serializers.SerializerMethodField()
+
+    class Meta(ProposalSerializer.Meta):
+        fields = ProposalSerializer.Meta.fields + ["company_profile"]
+
+    def get_company_profile(self, obj):
+        prof = getattr(obj.tenant, "company_profile", None)
+        return CompanyProfileSerializer(prof).data if prof else None
+
+
 class ProposalCreateSerializer(serializers.Serializer):
     title = serializers.CharField(min_length=8, max_length=140)
     description = serializers.CharField(max_length=10_000)
@@ -189,3 +251,67 @@ class ApplicationCreateSerializer(serializers.Serializer):
     proposed_total = serializers.DecimalField(
         max_digits=14, decimal_places=2, required=False, allow_null=True
     )
+
+
+# --- Favorites ---
+
+
+class FavoriteCreateSerializer(serializers.Serializer):
+    target_type = serializers.ChoiceField(choices=FavoriteTarget.choices)
+    target_id = serializers.UUIDField()
+
+
+class FavoriteSerializer(serializers.ModelSerializer):
+    id = serializers.UUIDField(source="public_id", read_only=True)
+    target_id = serializers.UUIDField(source="target_uuid", read_only=True)
+    target = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Favorite
+        fields = ["id", "target_type", "target_id", "target", "created_at"]
+
+    def get_target(self, obj):
+        """Resolve dados do alvo. Devolve null se o target sumir (cascade não cobre)."""
+        if obj.target_type == FavoriteTarget.PENTESTER:
+            p = (
+                PentesterProfile.objects.select_related("tenant")
+                .prefetch_related("specialties")
+                .filter(public_id=obj.target_uuid)
+                .first()
+            )
+            if not p:
+                return None
+            return {
+                "legal_name": p.tenant.legal_name,
+                "headline": p.headline,
+                "bio": p.bio,
+                "hourly_rate": str(p.hourly_rate) if p.hourly_rate is not None else None,
+                "currency": p.currency,
+                "availability": p.availability,
+                "location": p.location,
+                "rating_avg": float(p.rating_avg) if p.rating_avg is not None else None,
+                "verified": bool(p.verified_at),
+                "specialties": [s.label for s in p.specialties.all()],
+            }
+        if obj.target_type == FavoriteTarget.PROPOSAL:
+            pr = (
+                Proposal.objects.select_related("tenant")
+                .prefetch_related("specialties")
+                .filter(public_id=obj.target_uuid)
+                .first()
+            )
+            if not pr:
+                return None
+            return {
+                "title": pr.title,
+                "description": pr.description,
+                "company": pr.tenant.legal_name,
+                "budget_amount": str(pr.budget_amount) if pr.budget_amount is not None else None,
+                "budget_currency": pr.budget_currency,
+                "budget_kind": pr.budget_kind,
+                "duration_weeks": pr.duration_weeks,
+                "status": pr.status,
+                "published_at": pr.published_at,
+                "specialties": [s.label for s in pr.specialties.all()],
+            }
+        return None

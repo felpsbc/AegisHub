@@ -14,15 +14,35 @@ export type TenantType = "COMPANY" | "INDIVIDUAL";
 export type DocumentKind = "CNPJ" | "CPF";
 export type MembershipRole = "OWNER" | "MEMBER" | "BILLING";
 
+export type CompanyProfile = {
+  summary: string;
+  about: string;
+  website: string;
+  industry: string;
+  location: string;
+  size: string;
+  founded_year: number | null;
+};
+
 export type Membership = {
   tenant: {
     id: string;
     type: TenantType;
     legal_name: string;
     status: string;
+    company_profile: CompanyProfile | null;
   };
   role: MembershipRole;
+  pentester_profile_id: string | null;
 };
+
+export function pentesterProfileId(u: User | null | undefined): string | null {
+  if (!u) return null;
+  for (const m of u.memberships) {
+    if (m.pentester_profile_id) return m.pentester_profile_id;
+  }
+  return null;
+}
 
 export type User = {
   id: string;
@@ -30,6 +50,7 @@ export type User = {
   full_name: string;
   is_admin: boolean;
   mfa_enabled: boolean;
+  email_confirmed_at: string | null;
   memberships: Membership[];
 };
 
@@ -214,5 +235,384 @@ export function useLogout() {
       qc.setQueryData(["auth", "me"], null);
       qc.removeQueries({ queryKey: ["auth", "me"] });
     },
+  });
+}
+
+export type ConfirmEmailInput = { uidb64: string; token: string };
+
+export function useConfirmEmail() {
+  return useMutation<{ detail: string }, ApiError, ConfirmEmailInput>({
+    mutationFn: ({ uidb64, token }) =>
+      apiFetch<{ detail: string }>(`/auth/email/confirm/${uidb64}/${token}`, {
+        method: "POST",
+      }),
+  });
+}
+
+export function useResendConfirmation() {
+  return useMutation<void, ApiError, { email: string }>({
+    mutationFn: async ({ email }) => {
+      await apiFetch<null>("/auth/email/resend", { method: "POST", body: { email } });
+    },
+  });
+}
+
+// --- Domain types ---
+
+export type Specialty = { id: number; code: string; label: string };
+export type PentesterAvailability = "OPEN" | "BUSY" | "UNAVAILABLE";
+
+export type Pentester = {
+  id: string;
+  legal_name: string;
+  headline: string;
+  bio: string;
+  hourly_rate: string | null;
+  currency: string;
+  availability: PentesterAvailability;
+  location: string;
+  remote_only: boolean;
+  rating_avg: string | null;
+  rating_count: number;
+  verified_at: string | null;
+  specialties: Specialty[];
+  certifications: Array<{
+    code: string;
+    label: string;
+    issued_at: string | null;
+    expires_at: string | null;
+    verification: string;
+    verified_at: string | null;
+  }>;
+};
+
+export type ProposalStatus =
+  | "DRAFT"
+  | "PUBLISHED"
+  | "CONTRACTED"
+  | "CLOSED"
+  | "ARCHIVED";
+
+export type Proposal = {
+  id: string;
+  company: string;
+  company_id: string;
+  title: string;
+  description: string;
+  scope_md: string;
+  budget_amount: string | null;
+  budget_currency: string;
+  budget_kind: "FIXED" | "HOURLY" | "RANGE" | "NEGOTIABLE";
+  duration_weeks: number | null;
+  status: ProposalStatus;
+  visibility: "PUBLIC" | "INVITE_ONLY";
+  specialties: Specialty[];
+  published_at: string | null;
+  created_at: string;
+  company_profile?: CompanyProfile | null;
+};
+
+export type ApplicationStatus =
+  | "SUBMITTED"
+  | "SHORTLISTED"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "WITHDRAWN";
+
+export type Application = {
+  id: string;
+  proposal_id: string;
+  pentester_id: string;
+  pentester_name: string;
+  cover_message: string;
+  proposed_rate: string | null;
+  proposed_total: string | null;
+  status: ApplicationStatus;
+  created_at: string;
+};
+
+// --- Pentesters ---
+
+export type PentesterFilters = {
+  q?: string;
+  specialty?: string;
+  min_rate?: number;
+  max_rate?: number;
+};
+
+function queryString(params: Record<string, string | number | undefined>): string {
+  const usp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === "" || v === null) continue;
+    usp.set(k, String(v));
+  }
+  const s = usp.toString();
+  return s ? `?${s}` : "";
+}
+
+export function usePentesters(filters: PentesterFilters = {}) {
+  return useQuery<Pentester[]>({
+    queryKey: ["pentesters", filters],
+    queryFn: () => apiFetch<Pentester[]>(`/pentesters${queryString(filters)}`),
+    staleTime: 30_000,
+  });
+}
+
+export function usePentester(id: string | null | undefined) {
+  return useQuery<Pentester>({
+    queryKey: ["pentester", id],
+    queryFn: () => apiFetch<Pentester>(`/pentesters/${id}`),
+    enabled: !!id,
+    staleTime: 30_000,
+  });
+}
+
+// --- Proposals ---
+
+export type ProposalFilters = {
+  q?: string;
+  specialty?: string;
+  mine?: boolean;
+};
+
+export function useProposals(filters: ProposalFilters = {}) {
+  const params: Record<string, string | number | undefined> = {
+    q: filters.q,
+    specialty: filters.specialty,
+  };
+  if (filters.mine) params.mine = "1";
+  return useQuery<Proposal[]>({
+    queryKey: ["proposals", filters],
+    queryFn: () => apiFetch<Proposal[]>(`/proposals${queryString(params)}`),
+    staleTime: 30_000,
+  });
+}
+
+export function useProposal(id: string | null | undefined) {
+  return useQuery<Proposal>({
+    queryKey: ["proposal", id],
+    queryFn: () => apiFetch<Proposal>(`/proposals/${id}`),
+    enabled: !!id,
+    staleTime: 30_000,
+  });
+}
+
+export type CreateProposalInput = {
+  title: string;
+  description: string;
+  scope_md: string;
+  budget: { kind: "FIXED" | "HOURLY" | "RANGE" | "NEGOTIABLE"; amount?: number | null; currency?: string };
+  duration_weeks?: number | null;
+  visibility?: "PUBLIC" | "INVITE_ONLY";
+  specialties?: number[];
+};
+
+export function useCreateProposal() {
+  const qc = useQueryClient();
+  return useMutation<Proposal, ApiError, CreateProposalInput>({
+    mutationFn: (input) =>
+      apiFetch<Proposal>("/proposals", { method: "POST", body: input }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["proposals"] }),
+  });
+}
+
+export function usePublishProposal() {
+  const qc = useQueryClient();
+  return useMutation<Proposal, ApiError, string>({
+    mutationFn: (id) =>
+      apiFetch<Proposal>(`/proposals/${id}/publish`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["proposals"] }),
+  });
+}
+
+export function useCloseProposal() {
+  const qc = useQueryClient();
+  return useMutation<Proposal, ApiError, string>({
+    mutationFn: (id) =>
+      apiFetch<Proposal>(`/proposals/${id}/close`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["proposals"] }),
+  });
+}
+
+// --- Applications ---
+
+export type CreateApplicationInput = {
+  proposalId: string;
+  cover_message: string;
+  proposed_rate?: number | null;
+  proposed_total?: number | null;
+};
+
+export function useCreateApplication() {
+  const qc = useQueryClient();
+  return useMutation<Application, ApiError, CreateApplicationInput>({
+    mutationFn: ({ proposalId, ...body }) =>
+      apiFetch<Application>(`/proposals/${proposalId}/applications/new`, {
+        method: "POST",
+        body,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["applications"] }),
+  });
+}
+
+export function useMyApplications() {
+  return useQuery<Application[]>({
+    queryKey: ["applications", "mine"],
+    queryFn: () => apiFetch<Application[]>("/applications/mine"),
+    staleTime: 30_000,
+  });
+}
+
+export function useApplicationsForProposal(proposalId: string | null | undefined) {
+  return useQuery<Application[]>({
+    queryKey: ["applications", "proposal", proposalId],
+    queryFn: () =>
+      apiFetch<Application[]>(`/proposals/${proposalId}/applications`),
+    enabled: !!proposalId,
+    staleTime: 30_000,
+  });
+}
+
+// --- Favorites ---
+
+export type FavoriteTargetType = "pentester" | "proposal";
+
+export type FavoritePentesterTarget = {
+  legal_name: string;
+  headline: string;
+  bio: string;
+  hourly_rate: string | null;
+  currency: string;
+  availability: PentesterAvailability;
+  location: string;
+  rating_avg: number | null;
+  verified: boolean;
+  specialties: string[];
+};
+
+export type FavoriteProposalTarget = {
+  title: string;
+  description: string;
+  company: string;
+  budget_amount: string | null;
+  budget_currency: string;
+  budget_kind: string;
+  duration_weeks: number | null;
+  status: ProposalStatus;
+  published_at: string | null;
+  specialties: string[];
+};
+
+export type Favorite = {
+  id: string;
+  target_type: FavoriteTargetType;
+  target_id: string;
+  target: FavoritePentesterTarget | FavoriteProposalTarget | null;
+  created_at: string;
+};
+
+export function useFavorites(type?: FavoriteTargetType) {
+  return useQuery<Favorite[]>({
+    queryKey: ["favorites", type ?? "all"],
+    queryFn: () =>
+      apiFetch<Favorite[]>(`/favorites${type ? `?type=${type}` : ""}`),
+    staleTime: 15_000,
+  });
+}
+
+export function useAddFavorite() {
+  const qc = useQueryClient();
+  return useMutation<
+    Favorite,
+    ApiError,
+    { target_type: FavoriteTargetType; target_id: string }
+  >({
+    mutationFn: (input) =>
+      apiFetch<Favorite>("/favorites", { method: "POST", body: input }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["favorites"] }),
+  });
+}
+
+export function useRemoveFavorite() {
+  const qc = useQueryClient();
+  return useMutation<void, ApiError, string>({
+    mutationFn: async (favoriteId) => {
+      await apiFetch<null>(`/favorites/${favoriteId}`, { method: "DELETE" });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["favorites"] }),
+  });
+}
+
+// --- Company profile ---
+
+export function useCompanyProfile(enabled = true) {
+  return useQuery<CompanyProfile>({
+    queryKey: ["company", "profile"],
+    queryFn: () => apiFetch<CompanyProfile>("/company/profile"),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+export type CompanyProfilePatch = Partial<CompanyProfile>;
+
+export function useUpdateCompanyProfile() {
+  const qc = useQueryClient();
+  return useMutation<CompanyProfile, ApiError, CompanyProfilePatch>({
+    mutationFn: (input) =>
+      apiFetch<CompanyProfile>("/company/profile", { method: "PATCH", body: input }),
+    onSuccess: (profile) => {
+      qc.setQueryData(["company", "profile"], profile);
+      qc.invalidateQueries({ queryKey: ["auth", "me"] });
+    },
+  });
+}
+
+// --- Specialties / Pentester profile / Availability ---
+
+export function useSpecialties() {
+  return useQuery<Specialty[]>({
+    queryKey: ["specialties"],
+    queryFn: () => apiFetch<Specialty[]>("/specialties"),
+    staleTime: 5 * 60_000,
+  });
+}
+
+export type PentesterPatch = Partial<{
+  headline: string;
+  bio: string;
+  hourly_rate: number;
+  currency: string;
+  availability: PentesterAvailability;
+  location: string;
+  remote_only: boolean;
+  specialties: number[];
+}>;
+
+export function useUpdatePentester(publicId: string | null | undefined) {
+  const qc = useQueryClient();
+  return useMutation<Pentester, ApiError, PentesterPatch>({
+    mutationFn: (input) =>
+      apiFetch<Pentester>(`/pentesters/${publicId}`, {
+        method: "PATCH",
+        body: input,
+      }),
+    onSuccess: (p) => {
+      qc.invalidateQueries({ queryKey: ["pentesters"] });
+      qc.setQueryData(["pentester", publicId], p);
+    },
+  });
+}
+
+export function useUpdateAvailability(publicId: string | null | undefined) {
+  const qc = useQueryClient();
+  return useMutation<void, ApiError, PentesterAvailability>({
+    mutationFn: async (availability) => {
+      await apiFetch<null>(`/pentesters/${publicId}/availability`, {
+        method: "PATCH",
+        body: { availability },
+      });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["pentester", publicId] }),
   });
 }

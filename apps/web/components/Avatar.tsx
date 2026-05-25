@@ -1,5 +1,5 @@
-import { hashColor, initials, type Palette } from "@/lib/mock";
 import { cn } from "@/lib/cn";
+import { hashColor, initials, type Palette } from "@/lib/format";
 
 type Size = "sm" | "md" | "lg" | "xl";
 

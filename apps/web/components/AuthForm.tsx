@@ -10,6 +10,7 @@ import {
   useLogin,
   useLoginMfa,
   useRegister,
+  useResendConfirmation,
   type Account,
   type User,
 } from "@/lib/api";
@@ -50,6 +51,8 @@ function describeError(err: unknown): string {
   const map: Record<string, string> = {
     invalid_credentials: "E-mail ou senha incorretos.",
     inactive: "Conta desativada. Fale com o suporte.",
+    email_not_confirmed:
+      "Confirme seu e-mail antes de entrar. Verifique sua caixa de entrada.",
     invalid_mfa: "Código inválido.",
     no_pending_mfa: "Sessão de login expirou. Faça login novamente.",
     pending_mfa_expired: "Tempo para informar o código expirou. Faça login novamente.",
@@ -68,12 +71,13 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
   const [document, setDocument] = useState("");
   const [fullName, setFullName] = useState("");
   const [mfaCode, setMfaCode] = useState("");
-  const [stage, setStage] = useState<"form" | "mfa">("form");
+  const [stage, setStage] = useState<"form" | "mfa" | "confirm">("form");
   const [error, setError] = useState<string | null>(null);
 
   const login = useLogin();
   const loginMfa = useLoginMfa();
   const register = useRegister();
+  const resend = useResendConfirmation();
 
   const busy = login.isPending || loginMfa.isPending || register.isPending;
 
@@ -90,6 +94,10 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
         }
         router.replace(landingFor(result.user));
       } catch (err) {
+        if ((err as { message?: string }).message === "email_not_confirmed") {
+          setStage("confirm");
+          return;
+        }
         setError(describeError(err));
       }
       return;
@@ -117,12 +125,8 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
               document_kind: "CPF" as const,
             };
       await register.mutateAsync(payload);
-      const auto = await login.mutateAsync({ email, password });
-      if (auto.kind === "mfa_required") {
-        setStage("mfa");
-        return;
-      }
-      router.replace(landingFor(auto.user));
+      // Sem auto-login: o acesso só é liberado após confirmar o e-mail.
+      setStage("confirm");
     } catch (err) {
       setError(describeError(err));
     }
@@ -149,7 +153,46 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
           </span>
         </div>
 
-        {stage === "mfa" ? (
+        {stage === "confirm" ? (
+          <div>
+            <h1 className="h2 mb-2">Confirme seu e-mail</h1>
+            <p className="muted mb-4" style={{ fontSize: 14 }}>
+              Enviamos um link de confirmação para <strong>{email}</strong>.
+              Clique nele para ativar sua conta — só então o acesso é liberado.
+            </p>
+            {error && (
+              <div
+                className="mt-1 text-xs mb-2"
+                style={{ color: "var(--danger)" }}
+                role="alert"
+              >
+                {error}
+              </div>
+            )}
+            <button
+              type="button"
+              className="btn btn-block"
+              disabled={resend.isPending}
+              onClick={async () => {
+                setError(null);
+                try {
+                  await resend.mutateAsync({ email });
+                } catch (err) {
+                  setError(describeError(err));
+                }
+              }}
+            >
+              {resend.isPending ? "Reenviando…" : "Reenviar e-mail"}
+            </button>
+            <Link
+              href="/login"
+              className="btn btn-ghost btn-sm btn-block"
+              style={{ marginTop: 8 }}
+            >
+              Voltar ao login
+            </Link>
+          </div>
+        ) : stage === "mfa" ? (
           <form onSubmit={onMfa}>
             <p className="muted mb-4" style={{ fontSize: 13 }}>
               Informe o código de 6 dígitos do seu app autenticador, ou um código

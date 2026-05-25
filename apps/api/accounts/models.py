@@ -29,6 +29,8 @@ class UserManager(BaseUserManager):
         extra["is_admin"] = True
         extra["is_staff"] = True
         extra["is_superuser"] = True
+        # Superusuário criado via CLI já é confiável: entra com e-mail confirmado.
+        extra.setdefault("email_confirmed_at", timezone.now())
         return self._create_user(email, password, **extra)
 
 
@@ -40,6 +42,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_admin = models.BooleanField(default=False)
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+
+    email_confirmed_at = models.DateTimeField(null=True, blank=True)
 
     mfa_secret = models.BinaryField(null=True, blank=True)
     mfa_enabled = models.BooleanField(default=False)

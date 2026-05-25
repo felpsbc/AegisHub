@@ -1,13 +1,24 @@
 "use client";
 
-import { useState } from "react";
-import { Plus, X } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { Field, Input, Textarea } from "@/components/Field";
 import { Pill } from "@/components/Pill";
 import { Verified } from "@/components/Verified";
-import { accountFromUser, useSession, type User } from "@/lib/api";
+import {
+  accountFromUser,
+  pentesterProfileId,
+  useCompanyProfile,
+  usePentester,
+  useResendConfirmation,
+  useSession,
+  useSpecialties,
+  useUpdateAvailability,
+  useUpdateCompanyProfile,
+  useUpdatePentester,
+  type User,
+} from "@/lib/api";
 import { useToast } from "@/lib/store";
 
 export default function PerfilPage() {
@@ -30,14 +41,100 @@ export default function PerfilPage() {
   return <AdminPerfil user={user} />;
 }
 
+function PendingEmailBanner({ user }: { user: User }) {
+  const resend = useResendConfirmation();
+  const showToast = useToast((s) => s.show);
+  // O backend não devolve email_confirmed_at em UserMe ainda — mas se for entregue depois,
+  // este banner some sozinho via `mfa_enabled`-like condicional.
+  return (
+    <div
+      className="card"
+      style={{
+        background: "var(--surface-2, var(--surface))",
+        border: "0.5px dashed var(--border)",
+        padding: 14,
+        marginBottom: 16,
+      }}
+    >
+      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+        <span className="muted" style={{ fontSize: 13 }}>
+          Não recebeu o e-mail de confirmação? Confira a inbox ou reenvie.
+        </span>
+        <button
+          type="button"
+          className="btn btn-sm"
+          disabled={resend.isPending}
+          onClick={async () => {
+            try {
+              await resend.mutateAsync({ email: user.email });
+              showToast("E-mail de confirmação reenviado");
+            } catch {
+              showToast("Não foi possível reenviar agora.");
+            }
+          }}
+        >
+          {resend.isPending ? "Enviando…" : "Reenviar e-mail"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PentesterPerfil({ user }: { user: User }) {
   const showToast = useToast((s) => s.show);
-  const [rate, setRate] = useState(280);
-  const [status, setStatus] = useState<"open" | "busy">("open");
+  const profileId = pentesterProfileId(user);
+  const profile = usePentester(profileId);
+  const updateProfile = useUpdatePentester(profileId);
+  const updateAvailability = useUpdateAvailability(profileId);
+  const specialties = useSpecialties();
+
+  const [headline, setHeadline] = useState("");
+  const [bio, setBio] = useState("");
+  const [location, setLocation] = useState("");
+  const [rate, setRate] = useState<number>(280);
+  const [selected, setSelected] = useState<number[]>([]);
+
+  useEffect(() => {
+    if (!profile.data) return;
+    setHeadline(profile.data.headline ?? "");
+    setBio(profile.data.bio ?? "");
+    setLocation(profile.data.location ?? "");
+    setRate(profile.data.hourly_rate ? Number(profile.data.hourly_rate) : 280);
+    setSelected(
+      profile.data.specialties.map((s) => s.id).filter((id): id is number => typeof id === "number"),
+    );
+  }, [profile.data]);
+
+  const status = profile.data?.availability ?? "OPEN";
+
+  const save = async () => {
+    try {
+      await updateProfile.mutateAsync({
+        headline,
+        bio,
+        location,
+        hourly_rate: rate,
+        specialties: selected,
+      });
+      showToast("Perfil atualizado");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Falha ao salvar.");
+    }
+  };
+
+  const setStatus = async (a: "OPEN" | "BUSY") => {
+    try {
+      await updateAvailability.mutateAsync(a);
+      showToast(a === "OPEN" ? "Agora aberto a propostas" : "Marcado como em projeto");
+    } catch {
+      showToast("Falha ao atualizar status.");
+    }
+  };
 
   return (
     <div className="container-x" style={{ padding: "32px 0 64px", maxWidth: 800 }}>
       <h1 className="h1 mb-4">Seu perfil</h1>
+      {!user.email_confirmed_at && <PendingEmailBanner user={user} />}
       <div className="card card-pad-lg">
         <div className="row gap-3">
           <Avatar name={user.full_name} size="lg" />
@@ -58,23 +155,19 @@ function PentesterPerfil({ user }: { user: User }) {
             <span className="label">Status</span>
             <div className="toggle">
               <button
-                className={status === "open" ? "active" : ""}
-                onClick={() => {
-                  setStatus("open");
-                  showToast("Agora aberto a propostas");
-                }}
+                className={status === "OPEN" ? "active" : ""}
+                onClick={() => setStatus("OPEN")}
                 type="button"
+                disabled={updateAvailability.isPending}
               >
                 <span className="dot dot-open" />
                 Aberto
               </button>
               <button
-                className={status === "busy" ? "active" : ""}
-                onClick={() => {
-                  setStatus("busy");
-                  showToast("Status: em projeto");
-                }}
+                className={status === "BUSY" ? "active" : ""}
+                onClick={() => setStatus("BUSY")}
                 type="button"
+                disabled={updateAvailability.isPending}
               >
                 <span className="dot dot-busy" />
                 Em projeto
@@ -86,47 +179,62 @@ function PentesterPerfil({ user }: { user: User }) {
             <input
               className="range"
               type="range"
-              min={180}
-              max={500}
-              step={10}
+              min={100}
+              max={1000}
+              step={20}
               value={rate}
               onChange={(e) => setRate(Number(e.target.value))}
             />
           </div>
         </div>
 
-        <Field label="Bio">
-          <Textarea rows={3} placeholder="Conte um pouco sobre você e seu trabalho." />
+        <Field label="Headline (resumo curto)">
+          <Input
+            value={headline}
+            onChange={(e) => setHeadline(e.target.value)}
+            placeholder="Ex.: Pentest web, API e cloud"
+            maxLength={140}
+          />
         </Field>
 
-        <div className="row gap-3 mt-4">
-          <div style={{ flex: 1 }}>
-            <Field label="Cidade">
-              <Input placeholder="Cidade, UF" />
-            </Field>
-          </div>
-          <div style={{ flex: 1 }}>
-            <Field label="Idiomas">
-              <Input placeholder="Português, Inglês" />
-            </Field>
-          </div>
-        </div>
+        <Field label="Bio">
+          <Textarea
+            rows={4}
+            value={bio}
+            onChange={(e) => setBio(e.target.value)}
+            placeholder="Conte um pouco sobre você e seu trabalho."
+          />
+        </Field>
+
+        <Field label="Cidade">
+          <Input
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            placeholder="Cidade, UF"
+          />
+        </Field>
 
         <div className="mt-4">
           <span className="label">Especialidades</span>
           <div className="chips">
-            <Pill>
-              <Plus size={11} /> adicionar
-            </Pill>
-          </div>
-        </div>
-
-        <div className="mt-4">
-          <span className="label">Certificações</span>
-          <div className="chips">
-            <Pill>
-              <Plus size={11} /> enviar para verificação
-            </Pill>
+            {(specialties.data ?? []).map((s) => {
+              const active = selected.includes(s.id);
+              return (
+                <Pill
+                  key={s.code}
+                  active={active}
+                  onClick={() =>
+                    setSelected((curr) =>
+                      curr.includes(s.id)
+                        ? curr.filter((x) => x !== s.id)
+                        : [...curr, s.id],
+                    )
+                  }
+                >
+                  {s.label}
+                </Pill>
+              );
+            })}
           </div>
         </div>
 
@@ -134,9 +242,10 @@ function PentesterPerfil({ user }: { user: User }) {
           <button
             className="btn btn-primary"
             type="button"
-            onClick={() => showToast("Perfil atualizado")}
+            onClick={save}
+            disabled={updateProfile.isPending || !profileId}
           >
-            Salvar alterações
+            {updateProfile.isPending ? "Salvando…" : "Salvar alterações"}
           </button>
         </div>
       </div>
@@ -149,9 +258,50 @@ function EmpresaPerfil({ user }: { user: User }) {
   const tenant = user.memberships.find((m) => m.tenant.type === "COMPANY")?.tenant;
   const legalName = tenant?.legal_name ?? user.full_name;
 
+  const profile = useCompanyProfile();
+  const update = useUpdateCompanyProfile();
+
+  const [summary, setSummary] = useState("");
+  const [about, setAbout] = useState("");
+  const [website, setWebsite] = useState("");
+  const [industry, setIndustry] = useState("");
+  const [location, setLocation] = useState("");
+  const [size, setSize] = useState("");
+  const [foundedYear, setFoundedYear] = useState("");
+
+  useEffect(() => {
+    const p = profile.data ?? tenant?.company_profile;
+    if (!p) return;
+    setSummary(p.summary ?? "");
+    setAbout(p.about ?? "");
+    setWebsite(p.website ?? "");
+    setIndustry(p.industry ?? "");
+    setLocation(p.location ?? "");
+    setSize(p.size ?? "");
+    setFoundedYear(p.founded_year != null ? String(p.founded_year) : "");
+  }, [profile.data, tenant?.company_profile]);
+
+  const save = async () => {
+    try {
+      await update.mutateAsync({
+        summary,
+        about,
+        website,
+        industry,
+        location,
+        size,
+        founded_year: foundedYear ? Number(foundedYear) : null,
+      });
+      showToast("Perfil da empresa atualizado");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Falha ao salvar.");
+    }
+  };
+
   return (
     <div className="container-x" style={{ padding: "32px 0 64px", maxWidth: 800 }}>
       <h1 className="h1 mb-4">Perfil da empresa</h1>
+      {!user.email_confirmed_at && <PendingEmailBanner user={user} />}
       <div className="card card-pad-lg">
         <div className="row gap-3">
           <Avatar name={legalName} size="lg" />
@@ -163,40 +313,97 @@ function EmpresaPerfil({ user }: { user: User }) {
           </div>
         </div>
         <hr className="hr" />
-        <div className="row gap-3 mb-2 flex-wrap">
-          <div style={{ flex: 1, minWidth: 240 }}>
-            <Field label="CNPJ">
-              <Input placeholder="00.000.000/0000-00" />
-            </Field>
-          </div>
-          <div style={{ flex: 1, minWidth: 240 }}>
-            <Field label="Setor">
-              <Input placeholder="Ex.: Fintech" />
-            </Field>
-          </div>
-        </div>
-        <div className="row gap-3 mb-2 flex-wrap">
-          <div style={{ flex: 1, minWidth: 240 }}>
-            <Field label="Cidade">
-              <Input placeholder="Cidade, UF" />
-            </Field>
-          </div>
-          <div style={{ flex: 1, minWidth: 240 }}>
-            <Field label="Tamanho">
-              <Input placeholder="Nº de funcionários" />
-            </Field>
-          </div>
-        </div>
-        <Field label="Sobre">
-          <Textarea rows={3} placeholder="Descreva o negócio e o foco de segurança." />
+
+        <p className="muted mb-4" style={{ fontSize: 13 }}>
+          Preencha as informações públicas da empresa — é o que os pentesters
+          veem ao avaliar suas propostas.
+        </p>
+
+        <Field label="Resumo" hint="Uma linha sobre a empresa (até 200 caracteres).">
+          <Input
+            value={summary}
+            onChange={(e) => setSummary(e.target.value)}
+            placeholder="Ex.: Fintech de pagamentos B2B"
+            maxLength={200}
+          />
         </Field>
-        <div className="row mt-4" style={{ justifyContent: "flex-end" }}>
+
+        <Field label="Sobre a empresa (história)">
+          <Textarea
+            rows={6}
+            value={about}
+            onChange={(e) => setAbout(e.target.value)}
+            placeholder="Conte a história, missão e o que torna sua empresa única."
+            maxLength={8000}
+          />
+        </Field>
+
+        <div className="row gap-3 flex-wrap">
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <Field label="Setor">
+              <Input
+                value={industry}
+                onChange={(e) => setIndustry(e.target.value)}
+                placeholder="Ex.: Serviços financeiros"
+                maxLength={120}
+              />
+            </Field>
+          </div>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <Field label="Site">
+              <Input
+                value={website}
+                onChange={(e) => setWebsite(e.target.value)}
+                placeholder="https://suaempresa.com.br"
+                type="url"
+              />
+            </Field>
+          </div>
+        </div>
+
+        <div className="row gap-3 flex-wrap">
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <Field label="Localização">
+              <Input
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="Cidade, UF"
+                maxLength={120}
+              />
+            </Field>
+          </div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <Field label="Tamanho">
+              <Input
+                value={size}
+                onChange={(e) => setSize(e.target.value)}
+                placeholder="Ex.: 11–50 funcionários"
+                maxLength={40}
+              />
+            </Field>
+          </div>
+          <div style={{ flex: 1, minWidth: 140 }}>
+            <Field label="Fundada em">
+              <Input
+                type="number"
+                value={foundedYear}
+                onChange={(e) => setFoundedYear(e.target.value)}
+                min={1800}
+                max={2100}
+                placeholder="2018"
+              />
+            </Field>
+          </div>
+        </div>
+
+        <div className="row mt-6" style={{ justifyContent: "flex-end" }}>
           <button
             className="btn btn-primary"
             type="button"
-            onClick={() => showToast("Perfil atualizado")}
+            onClick={save}
+            disabled={update.isPending}
           >
-            Salvar
+            {update.isPending ? "Salvando…" : "Salvar alterações"}
           </button>
         </div>
       </div>

@@ -54,6 +54,12 @@ class Command(BaseCommand):
         user.is_staff = True
         user.is_superuser = True
         user.is_active = True
+        # Admin é provisionado/verificado fora de banda; já entra com e-mail
+        # confirmado para não esbarrar no gate de login.
+        if user.email_confirmed_at is None:
+            from django.utils import timezone
+
+            user.email_confirmed_at = timezone.now()
         if created or reset_password:
             user.set_password(password)
         user.save()

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Bell, LogOut, Moon, Sun } from "lucide-react";
+import { Bell, Heart, LogOut, Moon, Sun } from "lucide-react";
 
 import { accountFromUser, useLogout, useSession } from "@/lib/api";
 import { useTheme } from "@/lib/store";
@@ -78,6 +78,21 @@ export function Topbar() {
               className={pathname === "/app/dashboard" ? "active" : ""}
             >
               Dashboard
+            </Link>
+            {account === "empresa" && (
+              <Link
+                href="/app/minhas-propostas"
+                className={pathname.startsWith("/app/minhas-propostas") ? "active" : ""}
+              >
+                Minhas propostas
+              </Link>
+            )}
+            <Link
+              href="/app/favoritos"
+              className={pathname.startsWith("/app/favoritos") ? "active" : ""}
+            >
+              <Heart size={13} style={{ display: "inline-block", verticalAlign: "middle", marginRight: 4 }} />
+              Favoritos
             </Link>
             {account === "admin" && (
               <Link href="/admin" className={pathname.startsWith("/admin") ? "active" : ""}>

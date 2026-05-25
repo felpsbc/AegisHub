@@ -1,19 +1,25 @@
-import type { PentesterStatus } from "@/lib/mock";
+export type PentesterStatusLike =
+  | "open"
+  | "busy"
+  | "unavailable"
+  | "OPEN"
+  | "BUSY"
+  | "UNAVAILABLE";
 
 export function StatusDot({
   status,
   showLabel = true,
 }: {
-  status: PentesterStatus;
+  status: PentesterStatusLike;
   showLabel?: boolean;
 }) {
-  const label = status === "open" ? "Aberto a propostas" : "Em projeto";
+  const s = String(status).toLowerCase();
+  const label =
+    s === "open" ? "Aberto a propostas" : s === "busy" ? "Em projeto" : "Indisponível";
+  const cls = s === "open" ? "dot-open" : s === "busy" ? "dot-busy" : "dot-offline";
   return (
     <span className="row" style={{ gap: 6 }}>
-      <span
-        className={`dot ${status === "open" ? "dot-open" : "dot-busy"}`}
-        title={label}
-      />
+      <span className={`dot ${cls}`} title={label} />
       {showLabel && (
         <span style={{ fontSize: 12, color: "var(--text-2)" }}>{label}</span>
       )}

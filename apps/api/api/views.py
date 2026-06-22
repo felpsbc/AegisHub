@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.db import IntegrityError
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
@@ -98,7 +99,15 @@ class RegisterView(APIView):
     def post(self, request):
         ser = RegisterSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
-        user = register_account(**ser.validated_data)
+        try:
+            user = register_account(**ser.validated_data)
+        except IntegrityError:
+            # Rede de segurança contra corrida entre a validação e o INSERT:
+            # o cadastro já atômico faz rollback; aqui só traduzimos para 400.
+            return Response(
+                {"detail": "E-mail ou documento já cadastrado."},
+                status=status.HTTP_409_CONFLICT,
+            )
         return Response(UserMeSerializer(user).data, status=status.HTTP_201_CREATED)
 
 

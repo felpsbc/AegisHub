@@ -18,6 +18,10 @@ COPY apps/api/pyproject.toml apps/api/uv.lock* ./
 RUN uv sync --no-dev --frozen 2>/dev/null || uv sync --no-dev
 
 COPY apps/api ./
+COPY infra/docker/api-entrypoint.prod.sh /usr/local/bin/api-entrypoint.prod.sh
+RUN chmod +x /usr/local/bin/api-entrypoint.prod.sh
 
 EXPOSE 8000
-CMD ["uv", "run", "gunicorn", "pentesthub.wsgi:application", "-b", "0.0.0.0:8000", "--workers", "3"]
+# Default = produção (migra como owner, configura RLS, sobe gunicorn como app role).
+# O docker-compose.yml de dev sobrescreve este CMD com runserver.
+CMD ["/usr/local/bin/api-entrypoint.prod.sh"]

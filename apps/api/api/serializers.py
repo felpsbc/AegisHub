@@ -108,6 +108,28 @@ class RegisterSerializer(serializers.Serializer):
     document = serializers.CharField(max_length=20)
     document_kind = serializers.ChoiceField(choices=DocumentKind.choices)
 
+    def validate_email(self, value: str) -> str:
+        # Normaliza o domínio e impede colisão antes de bater no INSERT
+        # (sem isso, e-mail repetido vira IntegrityError → HTTP 500).
+        value = User.objects.normalize_email(value).lower()
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("Já existe uma conta com este e-mail.")
+        return value
+
+    def validate_document(self, value: str) -> str:
+        # Mantém só dígitos/letras do documento (remove pontuação de CPF/CNPJ).
+        return "".join(ch for ch in value if ch.isalnum())
+
+    def validate(self, attrs: dict) -> dict:
+        # A unicidade real é (document, document_kind); valida com o par.
+        if Tenant.objects.filter(
+            document=attrs["document"], document_kind=attrs["document_kind"]
+        ).exists():
+            raise serializers.ValidationError(
+                {"document": "Já existe um cadastro com este documento."}
+            )
+        return attrs
+
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField(max_length=254)

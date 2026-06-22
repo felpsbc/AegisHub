@@ -1,0 +1,18 @@
+# TLS automático via Let's Encrypt. O browser só fala com o Next (web);
+# o BFF em /api/proxy/* repassa para a API internamente, então a API
+# nunca é exposta diretamente.
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	# Cabeçalhos de segurança são definidos no Next (next.config.ts);
+	# aqui só reforçamos HSTS na borda.
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		-Server
+	}
+
+	reverse_proxy web:3000 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-For {remote_host}
+	}
+}

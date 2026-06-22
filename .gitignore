@@ -20,6 +20,8 @@ out/
 .env
 .env.local
 .env.*.local
+.env.production
+!.env.production.example
 
 # OS / editor
 .DS_Store
@@ -34,3 +36,6 @@ packages/api-types/src/generated/
 postgres-data/
 minio-data/
 *.sqlite3
+
+# Static files coletados (gerados por collectstatic no build/boot)
+apps/api/staticfiles/

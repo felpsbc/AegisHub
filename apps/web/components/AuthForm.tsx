@@ -387,6 +387,21 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
                 />
               </Field>
 
+              {mode === "login" && (
+                <div
+                  className="row"
+                  style={{ justifyContent: "flex-end", marginTop: 4 }}
+                >
+                  <Link
+                    href="/esqueci-senha"
+                    className="muted"
+                    style={{ fontSize: 12 }}
+                  >
+                    Esqueceu a senha?
+                  </Link>
+                </div>
+              )}
+
               {error && (
                 <div
                   className="mt-1 text-xs"

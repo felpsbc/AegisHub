@@ -15,8 +15,12 @@ from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 
 from accounts.crypto import decrypt_mfa_secret, encrypt_mfa_secret
-from accounts.email import email_confirmation_token, send_confirmation_email
+from accounts.email import email_confirmation_token, password_reset_token
 from accounts.models import User
+from accounts.tasks import (
+    send_confirmation_email_task,
+    send_password_reset_email_task,
+)
 from audit.services import record_event
 from tenants.models import DocumentKind, MembershipRole, TenantType
 from tenants.services import create_tenant_for_user
@@ -73,10 +77,10 @@ def register_account(
         object_id=user.pk,
         payload={"tenant_type": tenant_type, "email": email},
     )
-    try:
-        send_confirmation_email(user)
-    except Exception:  # falha de SMTP não deve abortar o registro, mas precisa ser visível
-        logger.exception("failed to send confirmation email to user_id=%s", user.pk)
+    # A request inteira roda em transaction.atomic (TenantMiddleware); enfileira só
+    # após o commit pra o worker não buscar um usuário ainda não persistido.
+    user_id = user.pk
+    transaction.on_commit(lambda: send_confirmation_email_task.delay(user_id))
     return user
 
 
@@ -108,7 +112,69 @@ def resend_confirmation(*, email: str) -> None:
         return  # não revelar existência do e-mail
     if user.email_confirmed_at is not None:
         return
-    send_confirmation_email(user)
+    user_id = user.pk
+    transaction.on_commit(lambda: send_confirmation_email_task.delay(user_id))
+
+
+@transaction.atomic
+def admin_set_user_active(*, user: User, active: bool, actor: User) -> User:
+    """Ativa/desativa uma conta (moderação). Desativar bloqueia o login.
+
+    Preferimos desativar a excluir: o usuário pode estar referenciado como `actor`
+    no audit_log (append-only), e o DELETE em cascata (SET_NULL → UPDATE) seria
+    barrado pela trigger. Desativar é reversível e não mexe na trilha.
+    """
+    if user.pk == actor.pk:
+        raise LoginError("cannot_change_own_status")
+    user.is_active = active
+    user.save(update_fields=["is_active", "updated_at"])
+    record_event(
+        actor=actor,
+        event_type="USER_ACTIVATED" if active else "USER_DEACTIVATED",
+        object_type="User",
+        object_id=user.pk,
+        payload={"email": user.email},
+    )
+    return user
+
+
+def request_password_reset(*, email: str) -> None:
+    """Dispara o e-mail de redefinição. Nunca revela se o e-mail existe.
+
+    Sempre retorna None (o caller responde 202 incondicionalmente) para não virar
+    um oráculo de enumeração de contas.
+    """
+    normalized = User.objects.normalize_email(email).lower()
+    try:
+        user = User.objects.get(email__iexact=normalized)
+    except User.DoesNotExist:
+        return
+    if not user.is_active:
+        return
+    user_id = user.pk
+    transaction.on_commit(lambda: send_password_reset_email_task.delay(user_id))
+
+
+@transaction.atomic
+def reset_password(*, uidb64: str, token: str, new_password: str) -> User:
+    """Valida o token e troca a senha. Token é de uso único (muda o hash da senha)."""
+    try:
+        uid = force_str(urlsafe_base64_decode(uidb64))
+        user = User.objects.get(pk=uid)
+    except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+        raise LoginError("invalid_reset")
+    if not password_reset_token.check_token(user, token):
+        raise LoginError("invalid_reset")
+    user.set_password(new_password)
+    user.save(update_fields=["password"])
+    record_event(
+        actor=user,
+        event_type="USER_PASSWORD_RESET",
+        object_type="User",
+        object_id=user.pk,
+        payload={"email": user.email},
+    )
+    return user
 
 
 def login_with_password(

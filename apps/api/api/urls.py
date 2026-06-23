@@ -14,6 +14,15 @@ urlpatterns = [
     path("auth/mfa/enable", views.MFAEnableView.as_view()),
     path("auth/email/confirm/<str:uidb64>/<str:token>", views.EmailConfirmView.as_view()),
     path("auth/email/resend", views.EmailResendView.as_view()),
+    path("auth/password/reset", views.PasswordResetRequestView.as_view()),
+    path("auth/password/reset/confirm", views.PasswordResetConfirmView.as_view()),
+
+    # admin
+    path("admin/stats", views.AdminStatsView.as_view()),
+    path("admin/users", views.AdminUserListView.as_view()),
+    path("admin/users/<uuid:public_id>/active", views.AdminUserActionView.as_view()),
+    path("admin/proposals", views.AdminProposalListView.as_view()),
+    path("admin/proposals/<uuid:public_id>", views.AdminProposalDeleteView.as_view()),
 
     # taxonomies
     path("specialties", views.SpecialtyListView.as_view()),

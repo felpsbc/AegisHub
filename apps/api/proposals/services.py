@@ -73,6 +73,27 @@ def publish_proposal(proposal: Proposal, *, actor) -> Proposal:
 
 
 @transaction.atomic
+def admin_delete_proposal(proposal: Proposal, *, actor) -> None:
+    """Exclusão administrativa de uma proposta (e candidaturas em cascata).
+
+    Captura o `public_id` no audit ANTES do DELETE, já que o objeto some. O
+    `record_event` grava só `object_id`/payload (não tem FK pra Proposal), então
+    a trilha de auditoria sobrevive à exclusão.
+    """
+    pk = proposal.pk
+    public_id = str(proposal.public_id)
+    title = proposal.title
+    proposal.delete()
+    record_event(
+        actor=actor,
+        event_type="PROPOSAL_DELETED_BY_ADMIN",
+        object_type="Proposal",
+        object_id=pk,
+        payload={"public_id": public_id, "title": title},
+    )
+
+
+@transaction.atomic
 def close_proposal(proposal: Proposal, *, actor) -> Proposal:
     if proposal.status not in {ProposalStatus.PUBLISHED, ProposalStatus.DRAFT}:
         raise ProposalError("invalid_state_for_close")

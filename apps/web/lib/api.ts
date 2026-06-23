@@ -69,17 +69,33 @@ export function primaryTenant(u: User | null | undefined): Membership["tenant"] 
   return u.memberships[0]?.tenant ?? null;
 }
 
+export type FieldError = { field: string; code: string; message?: string };
+
 export class ApiError extends Error {
   status: number;
   payload: unknown;
+  fieldErrors: FieldError[];
   constructor(status: number, payload: unknown) {
+    const obj =
+      payload && typeof payload === "object"
+        ? (payload as { detail?: unknown; errors?: unknown })
+        : {};
+    const fieldErrors: FieldError[] = Array.isArray(obj.errors)
+      ? (obj.errors as FieldError[])
+      : [];
+    // Prefere a mensagem específica do campo (ex.: "Já existe uma conta com este
+    // e-mail.") sobre o "Validation error" genérico do envelope.
+    const fieldMessage = fieldErrors
+      .map((e) => e.message)
+      .filter(Boolean)
+      .join(" ");
     const detail =
-      payload && typeof payload === "object" && "detail" in payload
-        ? String((payload as { detail: unknown }).detail)
-        : `http_${status}`;
+      fieldMessage ||
+      (obj.detail !== undefined ? String(obj.detail) : `http_${status}`);
     super(detail);
     this.status = status;
     this.payload = payload;
+    this.fieldErrors = fieldErrors;
   }
 }
 
@@ -254,6 +270,30 @@ export function useResendConfirmation() {
     mutationFn: async ({ email }) => {
       await apiFetch<null>("/auth/email/resend", { method: "POST", body: { email } });
     },
+  });
+}
+
+export function useRequestPasswordReset() {
+  return useMutation<void, ApiError, { email: string }>({
+    mutationFn: async ({ email }) => {
+      await apiFetch<null>("/auth/password/reset", { method: "POST", body: { email } });
+    },
+  });
+}
+
+export type ResetPasswordInput = {
+  uidb64: string;
+  token: string;
+  new_password: string;
+};
+
+export function useResetPassword() {
+  return useMutation<{ detail: string }, ApiError, ResetPasswordInput>({
+    mutationFn: (input) =>
+      apiFetch<{ detail: string }>("/auth/password/reset/confirm", {
+        method: "POST",
+        body: input,
+      }),
   });
 }
 
@@ -614,5 +654,96 @@ export function useUpdateAvailability(publicId: string | null | undefined) {
       });
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["pentester", publicId] }),
+  });
+}
+
+// --- Admin ---
+
+export type AdminStats = {
+  users_total: number;
+  users_active: number;
+  companies: number;
+  pentesters: number;
+  proposals_total: number;
+  proposals_published: number;
+  applications_total: number;
+};
+
+export type AdminUser = {
+  id: string;
+  email: string;
+  full_name: string;
+  is_admin: boolean;
+  is_active: boolean;
+  email_confirmed_at: string | null;
+  mfa_enabled: boolean;
+  last_login_at: string | null;
+  created_at: string;
+  role: string;
+};
+
+export type AdminProposal = {
+  id: string;
+  company: string;
+  title: string;
+  status: string;
+  visibility: string;
+  budget_amount: string | null;
+  budget_currency: string;
+  budget_kind: string;
+  applications_count: number;
+  published_at: string | null;
+  created_at: string;
+};
+
+export function useAdminStats() {
+  return useQuery<AdminStats>({
+    queryKey: ["admin", "stats"],
+    queryFn: () => apiFetch<AdminStats>("/admin/stats"),
+    staleTime: 15_000,
+  });
+}
+
+export function useAdminUsers(q?: string) {
+  return useQuery<AdminUser[]>({
+    queryKey: ["admin", "users", q ?? ""],
+    queryFn: () => apiFetch<AdminUser[]>(`/admin/users${queryString({ q })}`),
+    staleTime: 10_000,
+  });
+}
+
+export function useSetUserActive() {
+  const qc = useQueryClient();
+  return useMutation<AdminUser, ApiError, { id: string; active: boolean }>({
+    mutationFn: ({ id, active }) =>
+      apiFetch<AdminUser>(`/admin/users/${id}/active`, {
+        method: "POST",
+        body: { active },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      qc.invalidateQueries({ queryKey: ["admin", "stats"] });
+    },
+  });
+}
+
+export function useAdminProposals(q?: string) {
+  return useQuery<AdminProposal[]>({
+    queryKey: ["admin", "proposals", q ?? ""],
+    queryFn: () => apiFetch<AdminProposal[]>(`/admin/proposals${queryString({ q })}`),
+    staleTime: 10_000,
+  });
+}
+
+export function useDeleteProposal() {
+  const qc = useQueryClient();
+  return useMutation<void, ApiError, string>({
+    mutationFn: async (id) => {
+      await apiFetch<null>(`/admin/proposals/${id}`, { method: "DELETE" });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "proposals"] });
+      qc.invalidateQueries({ queryKey: ["admin", "stats"] });
+    },
   });
 }

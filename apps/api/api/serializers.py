@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from accounts.models import User
@@ -116,11 +118,30 @@ class RegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError("Já existe uma conta com este e-mail.")
         return value
 
+    def validate_password(self, value: str) -> str:
+        # Aplica os AUTH_PASSWORD_VALIDATORS do Django (comprimento mínimo, senha
+        # comum, senha só numérica). Sem isto o serializer só checava min_length e
+        # senhas fracas como "123456789012" passavam direto.
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages)) from exc
+        return value
+
     def validate_document(self, value: str) -> str:
-        # Mantém só dígitos/letras do documento (remove pontuação de CPF/CNPJ).
-        return "".join(ch for ch in value if ch.isalnum())
+        # Mantém só dígitos do documento (remove pontuação de CPF/CNPJ).
+        return "".join(ch for ch in value if ch.isdigit())
 
     def validate(self, attrs: dict) -> dict:
+        # Comprimento por tipo: CPF tem 11 dígitos, CNPJ tem 14.
+        document = attrs.get("document", "")
+        kind = attrs.get("document_kind")
+        expected = {DocumentKind.CPF: 11, DocumentKind.CNPJ: 14}.get(kind)
+        if expected is not None and len(document) != expected:
+            label = "CPF" if kind == DocumentKind.CPF else "CNPJ"
+            raise serializers.ValidationError(
+                {"document": f"{label} deve ter {expected} dígitos."}
+            )
         # A unicidade real é (document, document_kind); valida com o par.
         if Tenant.objects.filter(
             document=attrs["document"], document_kind=attrs["document_kind"]
@@ -129,6 +150,25 @@ class RegisterSerializer(serializers.Serializer):
                 {"document": "Já existe um cadastro com este documento."}
             )
         return attrs
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField(max_length=254)
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    uidb64 = serializers.CharField(max_length=64)
+    token = serializers.CharField(max_length=128)
+    new_password = serializers.CharField(min_length=12, max_length=128, write_only=True)
+
+    def validate_new_password(self, value: str) -> str:
+        # Mesmos AUTH_PASSWORD_VALIDATORS do cadastro: a nova senha precisa ser
+        # tão forte quanto a do registro (nada de senha comum/numérica).
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages)) from exc
+        return value
 
 
 class LoginSerializer(serializers.Serializer):
@@ -337,3 +377,43 @@ class FavoriteSerializer(serializers.ModelSerializer):
                 "specialties": [s.label for s in pr.specialties.all()],
             }
         return None
+
+
+# --- Admin ---
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    id = serializers.UUIDField(source="public_id", read_only=True)
+    role = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            "id", "email", "full_name", "is_admin", "is_active",
+            "email_confirmed_at", "mfa_enabled", "last_login_at", "created_at", "role",
+        ]
+
+    def get_role(self, obj: User) -> str:
+        if obj.is_admin:
+            return "admin"
+        m = obj.memberships.first()
+        if m is None:
+            return "—"
+        return "empresa" if m.tenant.type == TenantType.COMPANY else "pentester"
+
+
+class AdminProposalSerializer(serializers.ModelSerializer):
+    id = serializers.UUIDField(source="public_id", read_only=True)
+    company = serializers.CharField(source="tenant.legal_name", read_only=True)
+    applications_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Proposal
+        fields = [
+            "id", "company", "title", "status", "visibility",
+            "budget_amount", "budget_currency", "budget_kind",
+            "applications_count", "published_at", "created_at",
+        ]
+
+
+class AdminUserActionSerializer(serializers.Serializer):
+    active = serializers.BooleanField()

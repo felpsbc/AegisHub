@@ -84,6 +84,23 @@ services:
              uv run python manage.py loaddata fixtures/specialties.json fixtures/certifications.json &&
              uv run python manage.py runserver 0.0.0.0:8000"
 
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    env_file: .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./apps/api:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uv run celery -A pentesthub worker -l info --concurrency 2
+
   web:
     build:
       context: .

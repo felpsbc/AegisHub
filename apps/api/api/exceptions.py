@@ -27,7 +27,10 @@ def problem_details_handler(exc, context) -> Response | None:
         body["detail"] = str(detail["detail"])
     elif isinstance(detail, dict):
         body["detail"] = "Validation error"
-        body["errors"] = [{"field": k, "code": _first_code(v)} for k, v in detail.items()]
+        body["errors"] = [
+            {"field": k, "code": _first_code(v), "message": _first_message(v)}
+            for k, v in detail.items()
+        ]
     elif isinstance(detail, list):
         body["detail"] = "; ".join(str(item) for item in detail)
     else:
@@ -68,3 +71,10 @@ def _first_code(value) -> str:
         first = value[0]
         return getattr(first, "code", "invalid")
     return getattr(value, "code", "invalid")
+
+
+def _first_message(value) -> str:
+    """Texto legível do primeiro erro de um campo (ErrorDetail é subclasse de str)."""
+    if isinstance(value, list) and value:
+        return str(value[0])
+    return str(value)

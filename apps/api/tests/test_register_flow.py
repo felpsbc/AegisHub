@@ -39,6 +39,17 @@ def test_register_creates_user_and_tenant():
     assert Tenant.objects.filter(document="12345678000199").exists()
 
 
+def test_register_enqueues_confirmation_email(mailoutbox, django_capture_on_commit_callbacks):
+    # O e-mail de confirmação é enfileirado em Celery via transaction.on_commit;
+    # sob pytest as tasks rodam eager, então mailoutbox captura.
+    client = APIClient()
+    with django_capture_on_commit_callbacks(execute=True):
+        resp = client.post("/api/v1/auth/register", _payload(), format="json")
+    assert resp.status_code == 201
+    assert len(mailoutbox) == 1
+    assert "confirmar-email" in mailoutbox[0].body
+
+
 def test_register_duplicate_email_returns_400_not_500():
     client = APIClient()
     assert client.post("/api/v1/auth/register", _payload(), format="json").status_code == 201
@@ -73,6 +84,75 @@ def test_register_normalizes_document_punctuation():
         format="json",
     )
     assert resp.status_code == 400, resp.content
+
+
+def _first_error(resp):
+    return resp.json()["errors"][0]
+
+
+def test_register_rejects_numeric_password():
+    # Senha só com dígitos passava o min_length=12 do serializer mas é fraca;
+    # os AUTH_PASSWORD_VALIDATORS do Django agora barram no register.
+    client = APIClient()
+    resp = client.post(
+        "/api/v1/auth/register",
+        _payload(password="123456789012"),
+        format="json",
+    )
+    assert resp.status_code == 400, resp.content
+    assert _first_error(resp)["field"] == "password"
+    assert not User.objects.filter(email="novo@example.com").exists()
+
+
+def test_register_rejects_short_password():
+    client = APIClient()
+    resp = client.post(
+        "/api/v1/auth/register",
+        _payload(password="Curta1!"),
+        format="json",
+    )
+    assert resp.status_code == 400, resp.content
+    assert _first_error(resp)["field"] == "password"
+
+
+def test_register_rejects_cnpj_with_wrong_length():
+    client = APIClient()
+    resp = client.post(
+        "/api/v1/auth/register",
+        _payload(document="12345678901"),  # 11 dígitos num CNPJ
+        format="json",
+    )
+    assert resp.status_code == 400, resp.content
+    err = _first_error(resp)
+    assert err["field"] == "document"
+    assert "14" in err["message"]
+
+
+def test_register_rejects_cpf_with_wrong_length():
+    client = APIClient()
+    resp = client.post(
+        "/api/v1/auth/register",
+        _payload(tenant_type="INDIVIDUAL", document_kind="CPF", document="123"),
+        format="json",
+    )
+    assert resp.status_code == 400, resp.content
+    assert _first_error(resp)["field"] == "document"
+
+
+def test_register_error_carries_human_message():
+    # O envelope de validação precisa trazer `message` legível, não só o `code`,
+    # senão o frontend só consegue mostrar "Validation error" genérico.
+    client = APIClient()
+    assert client.post("/api/v1/auth/register", _payload(), format="json").status_code == 201
+    resp = client.post(
+        "/api/v1/auth/register",
+        _payload(document="99887766000155"),
+        format="json",
+    )
+    assert resp.status_code == 400
+    err = _first_error(resp)
+    assert err["field"] == "email"
+    assert "e-mail" in err["message"].lower()
 
 
 def test_login_blocked_until_email_confirmed():

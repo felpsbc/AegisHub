@@ -85,6 +85,27 @@ services:
         condition: service_healthy
     # CMD default do Dockerfile = api-entrypoint.prod.sh (migrate + RLS + gunicorn).
 
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DJANGO_DEBUG: "false"
+      DJANGO_DB_USER: pentesthub_app
+      DJANGO_DB_SSLMODE: ${DJANGO_DB_SSLMODE:-disable}
+    # api roda as migrations no boot; o worker só consome a fila.
+    command: uv run celery -A pentesthub worker -l info --concurrency 2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+
   web:
     build:
       context: .

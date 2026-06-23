@@ -1,35 +1,27 @@
 "use client";
 
 import { useState } from "react";
-import {
-  CheckCircle2,
-  DollarSign,
-  FileText,
-  TrendingUp,
-  Users,
-} from "lucide-react";
+import { FileText, TrendingUp, Users } from "lucide-react";
 
 import { Avatar } from "@/components/Avatar";
 import { Badge } from "@/components/Badge";
 import { Stat } from "@/components/Stat";
+import {
+  ApiError,
+  useAdminProposals,
+  useAdminStats,
+  useAdminUsers,
+  useDeleteProposal,
+  useSession,
+  useSetUserActive,
+  type AdminProposal,
+  type AdminUser,
+} from "@/lib/api";
 
-type Tab = "visao" | "verificacoes" | "usuarios" | "comissoes" | "moderacao";
-
-type VerifRow = {
-  id: string;
-  user: string;
-  cert: string;
-  enviado: string;
-  arquivo: string;
-};
+type Tab = "visao" | "usuarios" | "propostas";
 
 export default function AdminPage() {
-  const [tab, setTab] = useState<Tab>("verificacoes");
-  // Backend de verificação manual de certificações ainda não existe.
-  // Lista vazia até o endpoint /api/v1/admin/certifications/pending entrar.
-  const [verifs, setVerifs] = useState<VerifRow[]>([]);
-
-  const decide = (id: string) => setVerifs((v) => v.filter((x) => x.id !== id));
+  const [tab, setTab] = useState<Tab>("visao");
 
   return (
     <div className="container-x admin">
@@ -43,28 +35,6 @@ export default function AdminPage() {
           <TrendingUp size={13} /> Visão geral
         </button>
         <button
-          className={tab === "verificacoes" ? "active" : ""}
-          onClick={() => setTab("verificacoes")}
-          type="button"
-        >
-          <CheckCircle2 size={13} /> Verificações
-          {verifs.length > 0 && (
-            <span
-              style={{
-                marginLeft: "auto",
-                background: "var(--accent)",
-                color: "var(--accent-fg)",
-                borderRadius: 999,
-                padding: "0 6px",
-                fontSize: 10,
-                lineHeight: "16px",
-              }}
-            >
-              {verifs.length}
-            </span>
-          )}
-        </button>
-        <button
           className={tab === "usuarios" ? "active" : ""}
           onClick={() => setTab("usuarios")}
           type="button"
@@ -72,167 +42,247 @@ export default function AdminPage() {
           <Users size={13} /> Usuários
         </button>
         <button
-          className={tab === "comissoes" ? "active" : ""}
-          onClick={() => setTab("comissoes")}
+          className={tab === "propostas" ? "active" : ""}
+          onClick={() => setTab("propostas")}
           type="button"
         >
-          <DollarSign size={13} /> Comissões
-        </button>
-        <button
-          className={tab === "moderacao" ? "active" : ""}
-          onClick={() => setTab("moderacao")}
-          type="button"
-        >
-          <FileText size={13} /> Moderação
+          <FileText size={13} /> Propostas
         </button>
       </aside>
 
       <div>
         {tab === "visao" && <Visao />}
-        {tab === "verificacoes" && (
-          <Verificacoes verifs={verifs} onDecide={decide} />
-        )}
         {tab === "usuarios" && <Usuarios />}
-        {tab === "comissoes" && <Comissoes />}
-        {tab === "moderacao" && <Moderacao />}
+        {tab === "propostas" && <Propostas />}
       </div>
     </div>
   );
 }
 
-function Visao() {
+function ErrorBox({ error }: { error: unknown }) {
+  const msg = error instanceof ApiError ? error.message : "Falha ao carregar.";
   return (
-    <>
-      <h1 className="h1 mb-4">Visão geral</h1>
-      <div className="row gap-3 mb-4 flex-wrap">
-        <Stat num="—" label="Pentesters verificados" style={{ flex: 1, minWidth: 180 }} />
-        <Stat num="—" label="Empresas ativas" style={{ flex: 1, minWidth: 180 }} />
-        <Stat num="—" label="Projetos em andamento" style={{ flex: 1, minWidth: 180 }} />
-        <Stat num="—" label="Comissão (mês)" style={{ flex: 1, minWidth: 180 }} />
-      </div>
-
-      <div className="card card-pad-lg mb-4" style={{ textAlign: "center", color: "var(--text-2)" }}>
-        Métricas agregadas serão exibidas após o pipeline de telemetria entrar.
-      </div>
-    </>
+    <div className="card card-pad-lg" style={{ color: "var(--danger)" }} role="alert">
+      {msg}
+    </div>
   );
 }
 
-function Verificacoes({
-  verifs,
-  onDecide,
-}: {
-  verifs: VerifRow[];
-  onDecide: (id: string) => void;
-}) {
+function Visao() {
+  const { data, isLoading, isError, error } = useAdminStats();
   return (
     <>
-      <h1 className="h1 mb-4">Verificações pendentes</h1>
-      <div className="card" style={{ padding: 0 }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Pentester</th>
-              <th>Certificação</th>
-              <th>Enviado</th>
-              <th>Arquivo</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {verifs.map((v) => (
-              <tr key={v.id}>
-                <td>
-                  <span className="row gap-2">
-                    <Avatar name={v.user} size="sm" />
-                    {v.user}
-                  </span>
-                </td>
-                <td>
-                  <Badge>{v.cert}</Badge>
-                </td>
-                <td className="muted">{v.enviado}</td>
-                <td className="muted">{v.arquivo}</td>
-                <td className="text-right">
-                  <span className="row gap-2" style={{ justifyContent: "flex-end" }}>
-                    <button
-                      className="btn btn-sm"
-                      type="button"
-                      onClick={() => onDecide(v.id)}
-                    >
-                      Rejeitar
-                    </button>
-                    <button
-                      className="btn btn-primary btn-sm"
-                      type="button"
-                      onClick={() => onDecide(v.id)}
-                    >
-                      Aprovar
-                    </button>
-                  </span>
-                </td>
-              </tr>
-            ))}
-            {verifs.length === 0 && (
-              <tr>
-                <td
-                  colSpan={5}
-                  style={{
-                    padding: 32,
-                    textAlign: "center",
-                    color: "var(--text-2)",
-                  }}
-                >
-                  Sem pendências. Boa.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <h1 className="h1 mb-4">Visão geral</h1>
+      {isError ? (
+        <ErrorBox error={error} />
+      ) : (
+        <div className="row gap-3 mb-4 flex-wrap">
+          <Stat
+            num={isLoading ? "…" : data!.users_active}
+            label="Usuários ativos"
+            style={{ flex: 1, minWidth: 160 }}
+          />
+          <Stat
+            num={isLoading ? "…" : data!.companies}
+            label="Empresas"
+            style={{ flex: 1, minWidth: 160 }}
+          />
+          <Stat
+            num={isLoading ? "…" : data!.pentesters}
+            label="Pentesters"
+            style={{ flex: 1, minWidth: 160 }}
+          />
+          <Stat
+            num={isLoading ? "…" : data!.proposals_published}
+            label="Propostas publicadas"
+            style={{ flex: 1, minWidth: 160 }}
+          />
+          <Stat
+            num={isLoading ? "…" : data!.applications_total}
+            label="Candidaturas"
+            style={{ flex: 1, minWidth: 160 }}
+          />
+        </div>
+      )}
     </>
   );
 }
 
 function Usuarios() {
+  const [q, setQ] = useState("");
+  const { data, isLoading, isError, error } = useAdminUsers(q || undefined);
+  const setActive = useSetUserActive();
+  const { data: me } = useSession();
+
   return (
     <>
       <h1 className="h1 mb-4">Usuários</h1>
-      <div
-        className="card card-pad-lg"
-        style={{ textAlign: "center", color: "var(--text-2)", padding: 48 }}
-      >
-        Listagem de usuários virá com o painel admin dedicado (próxima entrega).
-      </div>
+      <input
+        className="input mb-4"
+        placeholder="Buscar por nome ou e-mail…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        style={{ maxWidth: 360 }}
+      />
+      {isError ? (
+        <ErrorBox error={error} />
+      ) : (
+        <div className="card" style={{ padding: 0 }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Usuário</th>
+                <th>Papel</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {(data ?? []).map((u: AdminUser) => {
+                const isSelf = me?.email === u.email;
+                return (
+                  <tr key={u.id}>
+                    <td>
+                      <span className="row gap-2">
+                        <Avatar name={u.full_name || u.email} size="sm" />
+                        <span>
+                          <div>{u.full_name || "—"}</div>
+                          <div className="muted" style={{ fontSize: 12 }}>
+                            {u.email}
+                          </div>
+                        </span>
+                      </span>
+                    </td>
+                    <td>
+                      <Badge>{u.role}</Badge>
+                    </td>
+                    <td>
+                      {u.is_active ? (
+                        <span style={{ color: "var(--success, #16a34a)" }}>Ativo</span>
+                      ) : (
+                        <span className="muted">Desativado</span>
+                      )}
+                    </td>
+                    <td className="text-right">
+                      <button
+                        className="btn btn-sm"
+                        type="button"
+                        disabled={isSelf || u.is_admin || setActive.isPending}
+                        title={
+                          isSelf
+                            ? "Você não pode alterar sua própria conta"
+                            : u.is_admin
+                              ? "Use o Django admin para alterar outros admins"
+                              : undefined
+                        }
+                        onClick={() =>
+                          setActive.mutate({ id: u.id, active: !u.is_active })
+                        }
+                      >
+                        {u.is_active ? "Desativar" : "Reativar"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!isLoading && (data ?? []).length === 0 && (
+                <EmptyRow span={4} text="Nenhum usuário encontrado." />
+              )}
+              {isLoading && <EmptyRow span={4} text="Carregando…" />}
+            </tbody>
+          </table>
+        </div>
+      )}
     </>
   );
 }
 
-function Comissoes() {
+function Propostas() {
+  const [q, setQ] = useState("");
+  const { data, isLoading, isError, error } = useAdminProposals(q || undefined);
+  const del = useDeleteProposal();
+
+  const onDelete = (p: AdminProposal) => {
+    const extra =
+      p.applications_count > 0
+        ? ` e ${p.applications_count} candidatura(s) vinculada(s)`
+        : "";
+    if (
+      window.confirm(
+        `Excluir a proposta "${p.title}"${extra}? Esta ação não pode ser desfeita.`,
+      )
+    ) {
+      del.mutate(p.id);
+    }
+  };
+
   return (
     <>
-      <h1 className="h1 mb-4">Comissões</h1>
-      <div
-        className="card card-pad-lg"
-        style={{ textAlign: "center", color: "var(--text-2)", padding: 48 }}
-      >
-        Relatório de comissões será exibido quando o módulo de pagamentos
-        (Fase 2) entrar em produção.
-      </div>
+      <h1 className="h1 mb-4">Propostas</h1>
+      <input
+        className="input mb-4"
+        placeholder="Buscar por título ou empresa…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        style={{ maxWidth: 360 }}
+      />
+      {isError ? (
+        <ErrorBox error={error} />
+      ) : (
+        <div className="card" style={{ padding: 0 }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Título</th>
+                <th>Empresa</th>
+                <th>Status</th>
+                <th>Candidaturas</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {(data ?? []).map((p: AdminProposal) => (
+                <tr key={p.id}>
+                  <td>{p.title}</td>
+                  <td className="muted">{p.company}</td>
+                  <td>
+                    <Badge>{p.status}</Badge>
+                  </td>
+                  <td className="muted">{p.applications_count}</td>
+                  <td className="text-right">
+                    <button
+                      className="btn btn-sm"
+                      type="button"
+                      disabled={del.isPending}
+                      style={{ color: "var(--danger)" }}
+                      onClick={() => onDelete(p)}
+                    >
+                      Excluir
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {!isLoading && (data ?? []).length === 0 && (
+                <EmptyRow span={5} text="Nenhuma proposta encontrada." />
+              )}
+              {isLoading && <EmptyRow span={5} text="Carregando…" />}
+            </tbody>
+          </table>
+        </div>
+      )}
     </>
   );
 }
 
-function Moderacao() {
+function EmptyRow({ span, text }: { span: number; text: string }) {
   return (
-    <>
-      <h1 className="h1 mb-4">Moderação</h1>
-      <div
-        className="card card-pad-lg"
-        style={{ textAlign: "center", color: "var(--text-2)", padding: 64 }}
+    <tr>
+      <td
+        colSpan={span}
+        style={{ padding: 32, textAlign: "center", color: "var(--text-2)" }}
       >
-        Sem reportes abertos no momento.
-      </div>
-    </>
+        {text}
+      </td>
+    </tr>
   );
 }

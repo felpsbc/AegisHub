@@ -9,7 +9,10 @@ from __future__ import annotations
 import os
 from urllib.parse import urljoin
 
-from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.contrib.auth.tokens import (
+    PasswordResetTokenGenerator,
+    default_token_generator,
+)
 from django.core.mail import EmailMultiAlternatives
 from django.utils.encoding import force_bytes
 from django.utils.html import escape
@@ -73,6 +76,54 @@ def send_confirmation_email(user: User) -> None:
         f"<p style=\"font-size:12px;color:#666\">Ou cole no navegador: <br>{safe_url}</p>"
         "<p style=\"font-size:12px;color:#666\">Link valido por 3 dias. "
         "Se voce nao criou essa conta, ignore este e-mail.</p>"
+        "<p style=\"font-size:12px;color:#666\">Equipe AegisHub</p>"
+        "</div>"
+    )
+    msg = EmailMultiAlternatives(subject, text_body, to=[user.email])
+    msg.attach_alternative(html_body, "text/html")
+    msg.send(fail_silently=False)
+
+
+# O default_token_generator mistura user.password e user.last_login no hash, então
+# o link de redefinição expira sozinho assim que a senha é trocada (uso único) ou
+# o usuário faz login. PASSWORD_RESET_TIMEOUT (settings) controla a validade.
+password_reset_token = default_token_generator
+
+
+def build_password_reset_url(user: User) -> str:
+    # Rota Next em app/(auth)/redefinir-senha/[uidb64]/[token]; o grupo (auth)
+    # não entra na URL pública.
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = password_reset_token.make_token(user)
+    return f"{_frontend_base()}/redefinir-senha/{uid}/{token}"
+
+
+def send_password_reset_email(user: User) -> None:
+    url = build_password_reset_url(user)
+    name = (user.full_name or user.email).split(" ")[0] or "ola"
+
+    subject = "Redefinição de senha no AegisHub"
+    text_body = (
+        f"Ola, {name}!\n\n"
+        "Recebemos um pedido para redefinir a senha da sua conta no AegisHub. "
+        "Para criar uma nova senha, clique no link abaixo (valido por 1 hora):\n\n"
+        f"{url}\n\n"
+        "Se voce nao pediu isso, pode ignorar este e-mail — sua senha continua a mesma.\n\n"
+        "Equipe AegisHub"
+    )
+    safe_url = escape(url)
+    html_body = (
+        "<div style=\"font-family:Inter,system-ui,sans-serif;color:#111;line-height:1.5\">"
+        f"<h2 style=\"margin:0 0 12px\">Ola, {escape(name)}!</h2>"
+        "<p>Recebemos um pedido para redefinir a senha da sua conta no "
+        "<strong>AegisHub</strong>. Clique abaixo para criar uma nova senha:</p>"
+        f"<p><a href=\"{safe_url}\" "
+        "style=\"display:inline-block;padding:10px 18px;background:#0b1220;"
+        "color:#fff;text-decoration:none;border-radius:8px;font-weight:500\">"
+        "Redefinir senha</a></p>"
+        f"<p style=\"font-size:12px;color:#666\">Ou cole no navegador: <br>{safe_url}</p>"
+        "<p style=\"font-size:12px;color:#666\">Link valido por 1 hora. "
+        "Se voce nao pediu isso, ignore este e-mail — sua senha continua a mesma.</p>"
         "<p style=\"font-size:12px;color:#666\">Equipe AegisHub</p>"
         "</div>"
     )

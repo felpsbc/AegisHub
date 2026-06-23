@@ -1,28 +1,36 @@
 from __future__ import annotations
 
 from django.db import IntegrityError
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from accounts.models import User
 from accounts.services import (
     LoginError,
     MFARequired,
+    admin_set_user_active,
     confirm_email,
     enable_mfa,
     login_with_password,
     logout_session,
     register_account,
+    request_password_reset,
     resend_confirmation,
+    reset_password,
     setup_mfa,
     verify_mfa,
 )
 from api.serializers import (
+    AdminProposalSerializer,
+    AdminUserActionSerializer,
+    AdminUserSerializer,
     ApplicationCreateSerializer,
     ApplicationSerializer,
     AvailabilityUpdateSerializer,
@@ -32,6 +40,8 @@ from api.serializers import (
     FavoriteSerializer,
     LoginSerializer,
     MFASerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
     PentesterPublicSerializer,
     PentesterUpdateSerializer,
     ProposalCreateSerializer,
@@ -55,6 +65,7 @@ from pentesters.services import set_availability
 from proposals.models import Proposal, ProposalStatus
 from proposals.services import (
     ProposalError,
+    admin_delete_proposal,
     close_proposal,
     create_proposal,
     publish_proposal,
@@ -90,10 +101,16 @@ def _is_member_of(user, tenant) -> bool:
     return Membership.objects.filter(user=user, tenant=tenant).exists()
 
 
+def _is_admin(user) -> bool:
+    return bool(user.is_authenticated and user.is_active and user.is_admin)
+
+
 # ============ AUTH ============
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "register"
 
     @extend_schema(request=RegisterSerializer, responses=UserMeSerializer)
     def post(self, request):
@@ -113,6 +130,8 @@ class RegisterView(APIView):
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
 
     @extend_schema(request=LoginSerializer, responses=UserMeSerializer)
     def post(self, request):
@@ -129,6 +148,8 @@ class LoginView(APIView):
 
 class LoginMFAView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "mfa"
 
     @extend_schema(request=MFASerializer, responses=UserMeSerializer)
     def post(self, request):
@@ -194,6 +215,113 @@ class EmailResendView(APIView):
         if email:
             resend_confirmation(email=email)
         return Response(status=status.HTTP_202_ACCEPTED)
+
+
+class PasswordResetRequestView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password_reset"
+
+    @extend_schema(request=PasswordResetRequestSerializer, responses={202: None})
+    def post(self, request):
+        ser = PasswordResetRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        # Resposta 202 incondicional: não confirma nem nega a existência do e-mail.
+        request_password_reset(**ser.validated_data)
+        return Response(status=status.HTTP_202_ACCEPTED)
+
+
+class PasswordResetConfirmView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password_reset"
+
+    @extend_schema(request=PasswordResetConfirmSerializer, responses={200: dict, 400: dict})
+    def post(self, request):
+        ser = PasswordResetConfirmSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            reset_password(**ser.validated_data)
+        except LoginError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"detail": "password_reset"})
+
+
+# ============ ADMIN ============
+# Gates inline (mesma dívida técnica das demais views — ver ONBOARDING). Todo
+# endpoint admin exige is_admin; non-admin recebe 403 sem vazar dados.
+
+class _AdminView(APIView):
+    """Base: 403 para qualquer não-admin antes de tocar no handler."""
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if not _is_admin(request.user):
+            self.permission_denied(request, message="admin_only")
+
+
+class AdminStatsView(_AdminView):
+    @extend_schema(responses={200: dict})
+    def get(self, request):
+        return Response({
+            "users_total": User.objects.count(),
+            "users_active": User.objects.filter(is_active=True).count(),
+            "companies": Tenant.objects.filter(type=TenantType.COMPANY).count(),
+            "pentesters": Tenant.objects.filter(type=TenantType.INDIVIDUAL).count(),
+            "proposals_total": Proposal.objects.count(),
+            "proposals_published": Proposal.objects.filter(
+                status=ProposalStatus.PUBLISHED
+            ).count(),
+            "applications_total": Application.objects.count(),
+        })
+
+
+class AdminUserListView(_AdminView):
+    @extend_schema(responses=AdminUserSerializer(many=True))
+    def get(self, request):
+        qs = User.objects.prefetch_related("memberships__tenant").order_by("-created_at")
+        q = request.query_params.get("q")
+        if q:
+            qs = qs.filter(Q(email__icontains=q) | Q(full_name__icontains=q))
+        return Response(AdminUserSerializer(qs[:200], many=True).data)
+
+
+class AdminUserActionView(_AdminView):
+    @extend_schema(request=AdminUserActionSerializer, responses=AdminUserSerializer)
+    def post(self, request, public_id):
+        user = get_object_or_404(User, public_id=public_id)
+        ser = AdminUserActionSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            admin_set_user_active(
+                user=user, active=ser.validated_data["active"], actor=request.user
+            )
+        except LoginError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        user.refresh_from_db()
+        return Response(AdminUserSerializer(user).data)
+
+
+class AdminProposalListView(_AdminView):
+    @extend_schema(responses=AdminProposalSerializer(many=True))
+    def get(self, request):
+        qs = (
+            Proposal.objects.select_related("tenant")
+            .annotate(applications_count=Count("applications"))
+            .order_by("-created_at")
+        )
+        q = request.query_params.get("q")
+        if q:
+            qs = qs.filter(Q(title__icontains=q) | Q(tenant__legal_name__icontains=q))
+        return Response(AdminProposalSerializer(qs[:200], many=True).data)
+
+
+class AdminProposalDeleteView(_AdminView):
+    @extend_schema(responses={204: None})
+    def delete(self, request, public_id):
+        proposal = get_object_or_404(Proposal, public_id=public_id)
+        admin_delete_proposal(proposal, actor=request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ============ TAXONOMIES ============
